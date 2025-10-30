@@ -1,0 +1,52 @@
+/* Contenedor principal para el split view */
+.resizable-group {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  margin: 0;
+  border: 1px solid #ccc;
+  overflow: hidden;
+}
+
+/* Estilo de los paneles (los elementos que contienen las tablas) */
+.resizable-panel {
+  padding: 15px;
+  overflow-y: auto;
+  background-color: #f7f7f7;
+  /* En la librería real, flex-basis/width se controlaría con JS */
+}
+
+/* Estilo del Divisor (el SPLIT) */
+.resizable-handle {
+  width: 8px; /* Hazlo más ancho para que sea fácil de arrastrar visualmente */
+  background-color: #d1d1d1;
+  cursor: col-resize; /* Indica que se puede arrastrar horizontalmente */
+  flex-shrink: 0; /* Asegura que no se encoja */
+  z-index: 10;
+}
+
+/* Estilos de las tablas */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  font-size: 0.9em;
+}
+th,
+td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+  background-color: #fff;
+}
+th {
+  background-color: #e9e9e9;
+  color: #333;
+}
+
+h3 {
+  color: #0056b3;
+  border-bottom: 2px solid #0056b3;
+  padding-bottom: 5px;
+  margin-top: 0;
+}

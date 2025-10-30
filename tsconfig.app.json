@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json", // O la base de tu proyecto
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx", // CRUCIAL: Habilita el nuevo runtime de JSX (evita el error de 'jsx-runtime').
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // Se elimina la línea "types": ["@svar-ui/react-gantt"] ya que estás usando Frappe Gantt.
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"], // Incluye todos los archivos .ts, .tsx en src
+  "exclude": ["node_modules", "dist"]
+}

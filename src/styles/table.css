@@ -1,0 +1,51 @@
+/* styles/table.css (Necesitas enlazar este archivo) */
+
+.gantt-combined-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.two-pane-wrapper {
+  display: flex;
+  width: 100%;
+  /* Mantiene las barras del Gantt alineadas con las filas de la tabla */
+  --gantt-bar-height: 20px; /* Asegúrate de que esta sea la altura real de tu barra */
+}
+
+/* Tabla */
+.table-pane {
+  border-right: 1px solid #ccc;
+  background-color: #f7f7f7;
+  /* Ajusta este ancho para ver las columnas */
+  flex-basis: 450px;
+  flex-shrink: 0;
+}
+
+.task-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.task-table th,
+.task-table td {
+  border-bottom: 1px solid #eee;
+  padding: 8px;
+  height: 36px; /* CRÍTICO: Debe coincidir con la altura efectiva de la barra de Gantt */
+  position: relative;
+}
+
+/* Estilo para el redimensionador de TanStack Table */
+.resizer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: 5px;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+}
+.resizer.isResizing {
+  background: #007bff;
+  opacity: 0.5;
+}

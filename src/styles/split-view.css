@@ -1,0 +1,57 @@
+/* styles/split-view.css */
+
+.gantt-combined-view {
+  /* Opcional: Centrar en la pantalla */
+  width: 90%;
+  margin: 0 auto;
+}
+
+.two-pane-wrapper {
+  display: flex;
+  /* Necesario para calcular el porcentaje de ancho correctamente */
+  width: 100%;
+  border: 1px solid #ccc;
+  position: relative; /* Necesario para que el cursor de resize funcione bien */
+}
+
+/* El Contenedor de la Tabla (Inicialmente 50% de ancho) */
+.table-pane {
+  flex-shrink: 0; /* Impide que Flexbox encoja la tabla */
+  box-sizing: border-box;
+  /* El ancho es controlado por el estado tableWidth en el componente JS */
+  /* width: 50%; <--- Ya no se necesita aquí, está en el style={...} */
+  background-color: #f7f7f7;
+}
+
+/* El Divisor Arrastrable (Splitter) */
+.splitter {
+  width: 6px; /* Ancho para el área de arrastre */
+  cursor: col-resize;
+  background-color: #ddd;
+  flex-shrink: 0; /* Asegura que mantenga su ancho */
+  z-index: 10;
+}
+
+.splitter:hover {
+  background-color: #aaa;
+}
+
+/* El Contenedor del Gantt */
+.gantt-pane {
+  flex-grow: 1; /* Ocupa el espacio restante */
+  overflow-x: hidden; /* Oculta barras de scroll si es necesario */
+}
+
+/* Estilos de la tabla (del ejemplo anterior) */
+.task-table {
+  border-collapse: collapse;
+  width: 100%; /* La tabla llena el pane de ancho */
+}
+.task-table th,
+.task-table td {
+  /* CRÍTICO: Asegura que la altura de fila coincida con la altura de la barra de Gantt */
+  height: 36px;
+  border-bottom: 1px solid #eee;
+  padding: 8px;
+  position: relative;
+}
