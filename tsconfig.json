@@ -1,7 +1,62 @@
 {
+  // Esto le dice a TypeScript dónde buscar tus archivos y cómo manejar las referencias
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }
-  ]
+  ],
+
+  "compilerOptions": {
+    /* Opciones de compilación clave para React */
+
+    // Indica a TypeScript que utilice la versión moderna de JSX (la que no requiere importar React)
+    "jsx": "react-jsx",
+
+    // Indica a TypeScript que reconozca los tipos de navegadores (DOM) y etiquetas HTML (div, table, svg, etc.)
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+
+    // Estándar de ECMAScript moderno
+    "target": "ES2022",
+
+    // Tipo de resolución de módulos (útil para herramientas modernas como Vite o Webpack)
+    "moduleResolution": "bundler",
+    "module": "ESNext",
+
+    /* Configuración de TypeScript y Linter */
+
+    // Habilita todas las comprobaciones de tipado estrictas (recomendado)
+    "strict": true,
+
+    // Habilita la comprobación de tipos para 'this'
+    "noImplicitThis": true,
+
+    // Asegúrate de que los tipos de las librerías se importan
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+
+    // Asegura que las mayúsculas/minúsculas de los archivos importados coincidan
+    "forceConsistentCasingInFileNames": true,
+
+    // Evita errores de tipado de las librerías en node_modules (puede ayudar a ignorar errores de D3/SVG)
+    "skipLibCheck": true,
+
+    /* Dónde buscar archivos y dónde compilar */
+
+    // Asegúrate de que los archivos TSX y TS sean incluidos
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    // Ruta base para resolver módulos
+    "baseUrl": ".",
+
+    // Directorios a ignorar
+    "exclude": ["node_modules", "dist", "build"],
+
+    // Donde TypeScript buscará los archivos fuente
+    "rootDir": "src",
+
+    // Donde se generarán los archivos JavaScript compilados (si aplica)
+    "outDir": "dist"
+  },
+  "include": ["src/**/*"] // Incluye todos los archivos dentro de la carpeta 'src'
 }
