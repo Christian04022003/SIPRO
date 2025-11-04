@@ -20,7 +20,7 @@ const initialTasks = [
     { id: 'S3-2', name: 'Despliegue Final', start: '2025-12-21', end: '2025-12-30', progress: 10, parentId: 'T3', cost: 5000, priority: 'Alta', dependencies: 'S3-1' }, // Depende de S3-1
 ];
 
-// --- FUNCIONES DE UTILIDAD DE FECHA PARA CPM ---
+// --- FUNCIONES DE UTILIDAD DE FECHA PARA CPM y ROLLUP ---
 
 // Calcula la duración en días calendario (incluye ambos días)
 const getDurationInDays = (startStr, endStr) => {
@@ -38,6 +38,20 @@ const addDays = (dateStr, days) => {
     if (isNaN(date)) return dateStr;
     date.setDate(date.getDate() + days);
     return date.toISOString().split('T')[0];
+};
+
+// Compara dos fechas y devuelve la más temprana
+const minDate = (dateStrA, dateStrB) => {
+    if (!dateStrA) return dateStrB;
+    if (!dateStrB) return dateStrA;
+    return (new Date(dateStrA) < new Date(dateStrB)) ? dateStrA : dateStrB;
+};
+
+// Compara dos fechas y devuelve la más tardía
+const maxDate = (dateStrA, dateStrB) => {
+    if (!dateStrA) return dateStrB;
+    if (!dateStrB) return dateStrA;
+    return (new Date(dateStrA) > new Date(dateStrB)) ? dateStrA : dateStrB;
 };
 
 // --- LÓGICA DE CÁLCULO DE RUTA CRÍTICA (CPM) ---
@@ -75,7 +89,7 @@ const useCriticalPathData = (tasks) => {
         // 2. Pase Adelante (Forward Pass) para ES y EF
         let changed;
         let iterationCount = 0;
-        const maxIterations = tasks.length * 2; // Límite para evitar bucles infinitos en dependencias cíclicas
+        const maxIterations = tasks.length * 2; 
 
         do {
             changed = false;
@@ -83,7 +97,7 @@ const useCriticalPathData = (tasks) => {
 
             tasks.forEach(task => {
                 const currentData = taskData.get(task.id);
-                let newES = currentData.start; // El inicio más temprano por defecto es su fecha de inicio actual
+                let newES = currentData.start; 
 
                 const dependencies = task.dependencies ? task.dependencies.split(',').map(id => id.trim()).filter(Boolean) : [];
 
@@ -93,7 +107,7 @@ const useCriticalPathData = (tasks) => {
                     dependencies.forEach(depId => {
                         const predecessor = taskData.get(depId);
                         if (predecessor && predecessor.EF) {
-                            // Para Finish-to-Start, el ES de la tarea actual es el día después del EF de la predecesora.
+                            // Finish-to-Start: ES de la tarea actual es el día después del EF de la predecesora.
                             const potentialES = addDays(predecessor.EF, 1);
                             if (!maxEF || potentialES > maxEF) {
                                 maxEF = potentialES;
@@ -108,7 +122,7 @@ const useCriticalPathData = (tasks) => {
                 }
 
                 // Calcular el nuevo EF
-                const newEF = addDays(newES, currentData.duration - 1); // -1 porque la duración incluye el día de inicio.
+                const newEF = addDays(newES, currentData.duration - 1); 
 
                 if (newES !== currentData.ES || newEF !== currentData.EF) {
                     currentData.ES = newES;
@@ -151,8 +165,7 @@ const useCriticalPathData = (tasks) => {
         do {
             changedBackward = false;
             iterationCount++;
-            // Iterar al revés es más eficiente para el pase atrás, pero iteraremos normalmente para manejar el caso general
-            // Recorrer las tareas en orden inverso puede ser más determinístico, pero el bucle do-while lo maneja.
+            
             for (let i = tasks.length - 1; i >= 0; i--) {
                 const task = tasks[i];
                 const currentData = taskData.get(task.id);
@@ -173,7 +186,8 @@ const useCriticalPathData = (tasks) => {
 
                     // Si minLS está definido, actualizar el LF y LS
                     if (minLS) {
-                        if (minLS !== currentData.LF) {
+                        // Solo actualizar si el nuevo LF es más temprano que el actual, o si el actual es nulo
+                        if (!currentData.LF || minLS < currentData.LF) {
                             currentData.LF = minLS;
                             currentData.LS = addDays(currentData.LF, -(currentData.duration - 1));
                             changedBackward = true;
@@ -198,7 +212,7 @@ const useCriticalPathData = (tasks) => {
             if (task.LF && task.EF) {
                 const lfDate = new Date(task.LF);
                 const efDate = new Date(task.EF);
-                Float = (lfDate.getTime() - efDate.getTime()) / (1000 * 60 * 60 * 24);
+                Float = Math.round((lfDate.getTime() - efDate.getTime()) / (1000 * 60 * 60 * 24)); // Redondear para evitar errores de coma flotante
             }
             task.Float = Float;
             task.isCritical = task.Float === 0;
@@ -262,6 +276,10 @@ const EditableCell = ({ value: initialValue, task, columnId, allTasks, updateTas
     };
 
     const handleDoubleClick = () => {
+        // No permitir edición de ID, Holgura, ni padres si son rollup
+        if (columnId === 'id' || columnId === 'Float' || (parentIds.has(task.id) && (columnId === 'start' || columnId === 'end'))) {
+             return;
+        }
         setIsEditing(true);
         setTimeout(() => inputRef.current?.focus(), 0);
     };
@@ -306,6 +324,13 @@ const EditableCell = ({ value: initialValue, task, columnId, allTasks, updateTas
         minWidth: '20px',
         backgroundColor: 'white',
         cursor: columnId === 'name' ? 'default' : 'pointer',
+        // Estilo especial para fechas de tareas padre (Rollup)
+        ...(parentIds.has(task.id) && (columnId === 'start' || columnId === 'end') ? { 
+            backgroundColor: '#e0f2f1', // Fondo más claro para indicar que son calculadas
+            fontWeight: 'bold',
+            color: '#047878', // Color teal
+            cursor: 'default',
+        } : {}),
     };
 
     if (columnId === 'name') {
@@ -491,14 +516,19 @@ const CustomGantt = ({ tasks, viewMode, scrollRef, onScroll }) => {
 
     const timeAxis = useMemo(() => {
         const axis = [];
+        // Empezar a dibujar desde el inicio del proyecto (o un poco antes para contexto)
         let currentDate = new Date(projectStart);
-        currentDate.setDate(1);
+        currentDate.setHours(0, 0, 0, 0); 
+        
+        // Ajustar el inicio del dibujo a la primera semana/mes
+        const startDay = new Date(projectStart);
+        startDay.setDate(startDay.getDate() - 7); // Retroceder una semana por contexto
 
-        const endMonth = new Date(projectEnd);
-        endMonth.setMonth(endMonth.getMonth() + 1, 0);
+        currentDate = startDay;
+
 
         let lastMonth = -1;
-        while (currentDate.getTime() <= endMonth.getTime()) {
+        while (currentDate.getTime() <= projectEnd.getTime() + (1000 * 60 * 60 * 24 * 7)) { // +7 días extra al final
             const daysDifference = Math.ceil((currentDate.getTime() - projectStart.getTime()) / (1000 * 60 * 60 * 24));
             const dayOfYear = daysDifference >= 0 ? daysDifference : 0;
 
@@ -537,7 +567,8 @@ const CustomGantt = ({ tasks, viewMode, scrollRef, onScroll }) => {
         const isMilestone = task.start === task.end;
         // Color para la Ruta Crítica
         const criticalColor = '#ef4444';
-        const nonCriticalColor = task.parentId ? 'rgb(109, 40, 217)' : 'rgb(59, 130, 246)'; // Morado/Azul
+        // Las tareas padre usan un color gris más oscuro para diferenciarse, las hijas usan color del nivel 2
+        const nonCriticalColor = task.parentId ? 'rgb(109, 40, 217)' : 'rgb(59, 130, 246)'; 
         const bgColor = task.isCritical ? criticalColor : nonCriticalColor;
 
         const progressWidth = width * (task.progress / 100);
@@ -583,14 +614,17 @@ const CustomGantt = ({ tasks, viewMode, scrollRef, onScroll }) => {
                         const succXStart = getXPosition(successorTask.start);
                         const succYCenter = headerHeight + successorTask.index * rowHeight + barPadding + (barHeight / 2);
 
+                        // Determinar si la línea es crítica (une dos tareas críticas)
                         const isCriticalLink = predecessorTask.isCritical && successorTask.isCritical;
-                        const linkColor = isCriticalLink ? '#991b1b' : '#6b7280'; // Rojo oscuro si ambos son críticos, gris si no
+                        const linkColor = isCriticalLink ? '#991b1b' : '#6b7280'; // Rojo oscuro si es crítica, gris si no
 
-                        const offset = 8;
+                        const offset = 8; // Espacio para el codo de la línea
 
+                        // Dibujar una conexión Finish-to-Start
+                        // Si la sucesora está arriba, el codo va hacia arriba. Si está abajo, va hacia abajo.
                         const path = `M ${depXEnd} ${depYCenter} 
-                                   H ${depXEnd + offset} 
-                                   V ${succYCenter > depYCenter ? succYCenter - offset : succYCenter + offset} 
+                                   H ${succXStart > depXEnd ? depXEnd + offset : succXStart - offset} 
+                                   V ${succYCenter} 
                                    H ${succXStart}`;
 
                         lines.push(
@@ -603,7 +637,7 @@ const CustomGantt = ({ tasks, viewMode, scrollRef, onScroll }) => {
                                 markerEnd={`url(#arrowhead-${isCriticalLink ? 'critical' : 'normal'})`}
                                 style={{ pointerEvents: 'none' }}
                             >
-                                <title>{`${predecessorTask.name} -> ${successorTask.name}`}</title>
+                                <title>{`${predecessorTask.name} -> ${successorTask.name} (FS)`}</title>
                             </path>
                         );
                     }
@@ -635,10 +669,12 @@ const CustomGantt = ({ tasks, viewMode, scrollRef, onScroll }) => {
                 <g className="header">
                     {timeAxis.map((day, index) => (
                         <g key={index}>
+                            {/* Líneas de la cuadrícula vertical */}
                             <line
                                 x1={day.x} y1={headerHeight} x2={day.x} y2={svgHeight}
                                 stroke="#f3f4f6" strokeWidth="1"
                             />
+                            {/* Línea de Hoy */}
                             {day.date.toDateString() === today.toDateString() && (
                                 <line x1={day.x} y1={headerHeight} x2={day.x} y2={svgHeight} stroke="#10b981" strokeWidth="2" strokeDasharray="4 4" />
                             )}
@@ -799,31 +835,91 @@ const ProjectGanttApp = () => {
         if (tasksWithCpm.length === 0) return [];
         return tasksWithCpm.filter(task => !isTaskHidden(task, collapsedParents, tasksWithCpm));
     }, [tasksWithCpm, collapsedParents]);
+    
+    // Función central para propagar los cambios de fecha de las subtareas al padre
+    const rollupParentDates = useCallback((parentId, currentTasks) => {
+        if (!parentId) return currentTasks;
+
+        const children = currentTasks.filter(t => t.parentId === parentId);
+        if (children.length === 0) return currentTasks;
+
+        let minStart = null;
+        let maxEnd = null;
+
+        children.forEach(child => {
+            minStart = minDate(minStart, child.start);
+            maxEnd = maxDate(maxEnd, child.end);
+        });
+
+        // Buscar el padre y actualizar si es necesario
+        return currentTasks.map(task => {
+            if (task.id === parentId) {
+                let updatedTask = { ...task };
+                let changed = false;
+
+                // Solo actualiza si los nuevos límites son diferentes y válidos
+                if (minStart && task.start !== minStart) {
+                    updatedTask.start = minStart;
+                    changed = true;
+                }
+                if (maxEnd && task.end !== maxEnd) {
+                    updatedTask.end = maxEnd;
+                    changed = true;
+                }
+
+                if (changed) {
+                    // Si la tarea padre cambió, recursivamente hacemos rollup a su propio padre (si existe).
+                    if (updatedTask.parentId) {
+                        return rollupParentDates(updatedTask.parentId, currentTasks.map(t => (t.id === parentId ? updatedTask : t))).find(t => t.id === parentId) || updatedTask;
+                    }
+                }
+                return updatedTask;
+            }
+            return task;
+        });
+
+    }, []);
+
 
     // Función para actualizar una tarea, enfocada en los datos base (no CPM)
     const updateTaskData = useCallback((id, columnId, newValue) => {
-        setTasks(prevTasks => prevTasks.map(task => {
-            if (task.id === id) {
-                let updatedValue = newValue;
-                if (columnId === 'cost' || columnId === 'progress') {
-                    updatedValue = parseFloat(String(newValue).replace(/[^0-9.]/g, ''));
-                    if (isNaN(updatedValue)) updatedValue = 0;
-                    if (columnId === 'progress') updatedValue = Math.min(100, Math.max(0, updatedValue));
-                }
-                if ((columnId === 'start' || columnId === 'end') && (!updatedValue || String(updatedValue).trim() === '')) {
-                     updatedValue = new Date().toISOString().split('T')[0];
-                }
+        setTasks(prevTasks => {
+            let updatedTasks = prevTasks.map(task => {
+                if (task.id === id) {
+                    let updatedValue = newValue;
+                    if (columnId === 'cost' || columnId === 'progress') {
+                        updatedValue = parseFloat(String(newValue).replace(/[^0-9.]/g, ''));
+                        if (isNaN(updatedValue)) updatedValue = 0;
+                        if (columnId === 'progress') updatedValue = Math.min(100, Math.max(0, updatedValue));
+                    }
+                    if ((columnId === 'start' || columnId === 'end') && (!updatedValue || String(updatedValue).trim() === '')) {
+                         updatedValue = new Date().toISOString().split('T')[0];
+                    }
 
-                // Lógica especial para hitos
-                if ((columnId === 'start' || columnId === 'end') && task.start === task.end) {
-                    return { ...task, start: updatedValue, end: updatedValue };
-                }
+                    // Lógica especial para hitos (si la tarea en sí es un hito)
+                    let updatedTask = { ...task };
+                    if (updatedTask.start === updatedTask.end && (columnId === 'start' || columnId === 'end')) {
+                        updatedTask.start = updatedValue;
+                        updatedTask.end = updatedValue;
+                    } else {
+                        updatedTask[columnId] = updatedValue;
+                    }
 
-                return { ...task, [columnId]: updatedValue };
+                    return updatedTask;
+                }
+                return task;
+            });
+
+            // Si la tarea modificada tiene un padre Y se modificó una fecha, ejecuta el rollup de fechas.
+            const modifiedTask = updatedTasks.find(t => t.id === id);
+            if (modifiedTask && modifiedTask.parentId && (columnId === 'start' || columnId === 'end')) {
+                // Ejecuta el rollup recursivo
+                updatedTasks = rollupParentDates(modifiedTask.parentId, updatedTasks);
             }
-            return task;
-        }));
-    }, []);
+
+            return updatedTasks;
+        });
+    }, [rollupParentDates]);
 
     const toggleCollapse = useCallback((taskId) => {
         setCollapsedParents(prev => ({
@@ -1013,6 +1109,8 @@ const ProjectGanttApp = () => {
         cursor: disabled ? 'not-allowed' : 'pointer',
     });
 
+
+    // --- Estilos Finales (del fragmento 3) ---
     const splitContainerStyle = {
         display: 'flex',
         flexDirection: 'row',
