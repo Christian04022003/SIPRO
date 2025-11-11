@@ -47,30 +47,53 @@ const getDuration = (start, end) => {
 };
 
 const findLastDescendantIndex = (parentId, tasks) => {
+    // 1. LOCALIZAR AL PADRE
     const parentIndex = tasks.findIndex(t => t.id === parentId);
-    if (parentIndex === -1) return -1;
+    
+    if (parentIndex === -1) {
+        console.log(`[Paso 1] ¡ALERTA! Padre ${parentId} no encontrado. Deteniendo.`);
+        return -1;
+    }
 
+    // Inicializar el índice del "último descendiente visto".
     let lastIndex = parentIndex;
 
+    // 2. RECORRER TAREAS SIGUIENTES
+    // Comenzamos a revisar las tareas a partir del índice justo después del padre.
     for (let i = parentIndex + 1; i < tasks.length; i++) {
+        
+        const currentTaskName = tasks[i].name;
+        
         let currentParentId = tasks[i].parentId;
         let isDescendant = false;
 
+        // Bucle que simula subir por el árbol genealógico de la tarea actual.
         while (currentParentId) {
+            
+            // A. ¿ES EL PADRE BUSCADO?
             if (currentParentId === parentId) {
                 isDescendant = true;
-                break;
+                console.log(`  [Ascenso] ¡MATCH! "${currentTaskName}" es descendiente directo o indirecto.`);
+                break; 
             }
+            
+            // B. SUBIR UN NIVEL MÁS
             const parentTask = tasks.find(t => t.id === currentParentId);
-            currentParentId = parentTask ? parentTask.parentId : null;
+            currentParentId = parentTask ? parentTask.parentId : null; 
         }
 
+        // --- FIN DEL CHEQUEO DE ASCENDENCIA ---
+
+        // 3. DECISIÓN
         if (isDescendant) {
+            // Si es descendiente, actualizamos el índice.
             lastIndex = i;
         } else {
-            break;
+            // Si NO es descendiente, hemos salido de la rama. ¡Detener y salir!
+            break; 
         }
     }
+
     return lastIndex;
 };
 
@@ -215,10 +238,14 @@ const ProjectGanttApp = () => {
 
 const createNewTask = useCallback((currentTasks, parentId, isMilestone) => {
     const id = generateUniqueId(currentTasks);
+    console.log(currentTasks)
     
     // 1. Determinar la Fecha Base:
     // Si se proporciona un parentId, buscamos la tarea padre.
+    console.log(`Se agrego desde ${parentId}`)
     const parentTask = parentId ? currentTasks.find(t => t.id === parentId) : null;
+    console.log("Se encontro")
+    console.log(parentTask)
     
     // Si hay un padre, usamos su fecha de inicio y fin.
     // Si NO hay padre (es tarea principal), o si el padre no existe, usamos la fecha de hoy.
@@ -244,23 +271,76 @@ const createNewTask = useCallback((currentTasks, parentId, isMilestone) => {
     };
 }, [addDays]); // Asegúrate de que addDays se incluya en las dependencias si es un prop/función externa
 
-    const addNewTask = useCallback((parentId = null) => {
-        setTasks(prevTasks => {
-            const newTask = createNewTask(prevTasks, parentId, false);
-            let newTasks = [...prevTasks];
+
+const addNewTask = useCallback((parentId = null) => {
+    
+    // Log 1: Información inicial de la llamada a la función
+    console.log("=======================================");
+    console.log(">>> [addNewTask] INICIO del proceso <<<");
+    console.log("Parámetro recibido (parentId):", parentId);
+
+    setTasks(prevTasks => {
+        // Log 2: Acceso al estado anterior
+        console.log("[setTasks] Accediendo al estado anterior (prevTasks). Cantidad de tareas previas:", prevTasks.length);
+        
+        // --- 1. CREACIÓN DE LA TAREA ---
+        const newTask = createNewTask(prevTasks, parentId, false);
+        // Log 3: Tarea nueva generada
+        console.log("[setTasks] Tarea generada por createNewTask:", newTask);
+
+        // --- 2. PREPARACIÓN DEL NUEVO ESTADO ---
+        let newTasks = [...prevTasks];
+        // Log 4: Copia de tareas
+        console.log("[setTasks] Se crea una copia inmutable (newTasks) para modificar.");
+        
+        // --- 3. LÓGICA DE INSERCIÓN CONDICIONAL ---
+        if (parentId) {
+            // Log 5: El código entra en la rama para subtareas
+            console.log("[setTasks/if] La nueva tarea es un HIJO. Buscando el lugar de inserción...");
             
-            if (parentId) {
-                const lastDescendantIndex = findLastDescendantIndex(parentId, newTasks);
-                if (lastDescendantIndex !== -1) newTasks.splice(lastDescendantIndex + 1, 0, newTask);
-                else newTasks.push(newTask);
-                
-                // Recalcular fechas del padre después de agregar la tarea
-                newTasks = newTasks.map(t => t.id === parentId ? { ...t, ...rollupDates(parentId, newTasks) } : t);
-            } else { newTasks.push(newTask); }
+            const lastDescendantIndex = findLastDescendantIndex(parentId, newTasks);
+            // Log 6: Resultado de la búsqueda de posición
+            console.log(`[setTasks/if] Índice del ÚLTIMO descendiente del padre (${parentId}): ${lastDescendantIndex}`);
+
+            if (lastDescendantIndex !== -1) {
+                // Inserción ordenada
+                newTasks.splice(lastDescendantIndex + 1, 0, newTask);
+                // Log 7a: Inserción por splice
+                console.log("[setTasks/if] Tarea insertada con SPLICE en el índice:", lastDescendantIndex + 1);
+            } else { 
+                // Inserción simple si no hay descendientes (o si es el único)
+                newTasks.push(newTask);
+                // Log 7b: Inserción por push
+                console.log("[setTasks/if] El padre NO tiene otros descendientes. Tarea insertada con PUSH al final.");
+            }
             
-            return newTasks;
-        });
-    }, [createNewTask, rollupDates]);
+            // --- 4. RECALCULAR DATOS DEL PADRE ---
+            // Recalcular fechas del padre después de agregar la tarea
+            console.log(`[setTasks/if] Procesando RECALCULO de fechas para el padre ID: ${parentId}`);
+
+            newTasks = newTasks.map(t => 
+                t.id === parentId 
+                    ? { ...t, ...rollupDates(parentId, newTasks) } // ¡El cambio ocurre aquí!
+                    : t
+            );
+            // Log 8: Resultado del map
+            console.log(`[setTasks/if] El padre (${parentId}) ha sido actualizado con los nuevos datos de rollupDates.`);
+            
+        } else { 
+            // El código entra en la rama para tareas principales
+            newTasks.push(newTask); 
+            // Log 9: Inserción de tarea principal
+            console.log("[setTasks/else] La nueva tarea es una tarea PRINCIPAL. Insertada con PUSH al final.");
+        }
+        
+        // Log 10: Fin del proceso y valor devuelto
+        console.log("[setTasks] Nuevo array de tareas generado. Longitud final:", newTasks.length);
+        console.log("<<< [addNewTask] FIN del proceso >>>");
+        console.log("=======================================");
+        
+        return newTasks; // Este es el valor que React usará para el nuevo estado
+    });
+}, [createNewTask, rollupDates]);
 
     const addNewMilestone = useCallback((parentId) => {
         setTasks(prevTasks => {

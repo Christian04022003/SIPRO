@@ -85,8 +85,6 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         // Bloqueo: No actualizar si es un campo calculado.
         if (!isCalculatedField && String(value) !== String(initialValue)) {
             updateTaskData(task.id, columnId, value);
-            console.log("update")
-            console.log(updateTaskData(task.id, columnId, value))
         }
     };
 
