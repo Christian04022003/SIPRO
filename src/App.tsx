@@ -1,24 +1,24 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
-// Después (Correcto):
-import { initialTasks, defaultColumnsDef, ViewMode } from './constants';
-import EditableCell from './components/EditableCell';
-import CustomGantt from './components/CustomGantt';
-// =================================================================
-// --- TIPOS Y CONSTANTES ---
-// =================================================================
 
+// Definiciones de tipos y constantes asumidas
 /** @typedef {'Day' | 'Week' | 'Month'} ViewModeType */
 /** @typedef {'Alta' | 'Media' | 'Baja'} PriorityType */
 /** @typedef {{ id: string, name: string, start: string, end: string, progress: number, parentId: string | null, cost: number, priority: PriorityType, dependencies: string, isMilestone: boolean, index?: string, [key: string]: any }} Task */
 /** @typedef {Task & { duration: number, earlyStart: string, earlyFinish: string, lateStart: string, lateFinish: string, totalSlack: number, isCritical: boolean }} TaskWithCPM */
 /** @typedef {{ id: string, header: string, defaultSize: number, accessorKey: string }} ColumnDef */
 
+// [NOTA: Los imports de initialTasks, defaultColumnsDef, ViewMode, EditableCell, CustomGantt deben ser correctos en tu proyecto]
+import { initialTasks, defaultColumnsDef, ViewMode } from './constants';
+import EditableCell from './components/EditableCell';
+import CustomGantt from './components/CustomGantt';
+
+
 const ROW_HEIGHT_PX = 30;
 const BAR_HEIGHT = 25;
 const BAR_PADDING = (ROW_HEIGHT_PX - BAR_HEIGHT) / 2;
 
 // =================================================================
-// --- UTILITIES Y MOCKS DE LÓGICA (CPM y Utils) ---
+// --- UTILITIES (Funciones de Ayuda) ---
 // =================================================================
 
 const generateUniqueId = (tasks) => {
@@ -42,6 +42,7 @@ const getDuration = (start, end) => {
     const startDate = new Date(start);
     const endDate = new Date(end);
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return 0;
+    // Se suma 1 para incluir el día de fin
     return Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 };
 
@@ -73,66 +74,28 @@ const findLastDescendantIndex = (parentId, tasks) => {
     return lastIndex;
 };
 
-// LÓGICA DE UTILIDAD DE TAREAS (getTaskDepth)
-const getTaskDepth = (task, allTasks) => {
-    let depth = 0;
-    let currentParentId = task.parentId;
-    while (currentParentId) {
-        depth++;
-        const parentTask = allTasks.find(t => t.id === currentParentId);
-        currentParentId = parentTask ? parentTask.parentId : null;
-    }
-    return depth;
-};
-
-// UTILITY: Calcula el índice jerárquico (1, 1.1, 1.2, 2, 2.1, etc.)
-/**
- * @param {Task[]} tasks - Lista de tareas ordenada jerárquicamente.
- * @returns {Task[]} Lista de tareas con el campo 'index' añadido.
- */
 const calculateTaskIndices = (tasks) => {
-    const indexTracker = {}; // { parentId | 'root': lastIndexNumber }
+    const indexTracker = {}; 
     const indexedTasks = [];
 
     for (const task of tasks) {
         const parentIdKey = task.parentId || 'root';
 
-        // 1. Determinar el prefijo del índice (ej: '1.' o '1.2.')
         let parentIndexPrefix = '';
         if (task.parentId) {
-            // Se busca la tarea padre en la lista de tareas *ya indexadas*
             const parent = indexedTasks.find(t => t.id === task.parentId);
             if (parent && parent.index) {
                 parentIndexPrefix = parent.index + '.';
             }
         }
 
-        // 2. Incrementar el contador para este nivel específico
         indexTracker[parentIdKey] = (indexTracker[parentIdKey] || 0) + 1;
-
-        // 3. Construir el índice jerárquico completo
         const taskIndex = parentIndexPrefix + indexTracker[parentIdKey];
-
-        // 4. Almacenar la tarea con el nuevo índice
         indexedTasks.push({ ...task, index: taskIndex });
     }
     return indexedTasks;
 };
 
-
-// MOCK: Simulación de useCriticalPathData (Ruta Crítica)
-const useCriticalPathData = (tasks) => {
-    // Retorna las tareas con datos CPM de mock
-    const fullTaskData = useMemo(() => tasks.map(t => ({
-        ...t,
-        duration: getDuration(t.start, t.end),
-        earlyStart: t.start, earlyFinish: t.end, lateStart: t.start, lateFinish: t.end,
-        totalSlack: t.isMilestone ? 0 : (t.id === 'T2' || t.id === 'T3' || t.id === 'T6' ? 0 : 2), // Mock de holgura
-        isCritical: !t.isMilestone && (t.id === 'T2' || t.id === 'T3' || t.id === 'T6' || t.id === 'T5' || t.id === 'T4'), // Mock critical tasks
-    })), [tasks]);
-    const criticalTasks = fullTaskData.filter(t => t.isCritical && !t.isMilestone && !t.parentId).map(t => t.name);
-    return { fullTaskData, criticalTasks };
-};
 
 const isTaskHidden = (task, collapsedParents, allTasks) => {
     if (!task.parentId) return false;
@@ -147,51 +110,90 @@ const isTaskHidden = (task, collapsedParents, allTasks) => {
     return false;
 };
 
-const rollupParentDates = (parentId, tasks) => { return tasks; }; // Mock: No implementamos la lógica compleja de rollup de fechas.
+
+// 🌟🌟🌟 IMPLEMENTACIÓN CLAVE: Lógica de Roll-up de Fechas 🌟🌟🌟
+/**
+ * @param {string} parentId 
+ * @param {Task[]} tasks 
+ * @returns {{ start: string, end: string }} Las fechas agregadas (inicio más temprano, fin más tardío).
+ */
+const rollupParentDates = (parentId, tasks) => {
+    const children = tasks.filter(t => t.parentId === parentId);
+    
+    // Si no hay hijos (o no son válidos), no hacemos nada
+    if (children.length === 0) {
+        const parent = tasks.find(t => t.id === parentId);
+        return { start: parent?.start, end: parent?.end };
+    }
+
+    // Convertir fechas a milisegundos para encontrar la fecha más temprana y más tardía
+    const startTimestamps = children
+        .map(t => new Date(t.start).getTime())
+        .filter(t => !isNaN(t));
+        
+    const endTimestamps = children
+        .map(t => new Date(t.end).getTime())
+        .filter(t => !isNaN(t));
+
+    // Si no hay fechas válidas, devolvemos las del padre
+    if (startTimestamps.length === 0 || endTimestamps.length === 0) {
+        const parent = tasks.find(t => t.id === parentId);
+        return { start: parent?.start, end: parent?.end };
+    }
+
+    // Inicio agregado = Mínimo (más temprano) de los inicios de los hijos
+    const earliestStart = new Date(Math.min(...startTimestamps));
+    
+    // Fin agregado = Máximo (más tardío) de los fines de los hijos
+    const latestEnd = new Date(Math.max(...endTimestamps));
+
+    // Formatear de vuelta a string 'YYYY-MM-DD'
+    return {
+        start: earliestStart.toISOString().split('T')[0],
+        end: latestEnd.toISOString().split('T')[0],
+    };
+};
+// ----------------------------------------------------------------
 
 // =================================================================
 // --- COMPONENTE PRINCIPAL (ProjectGanttApp) ---
 // =================================================================
 const ProjectGanttApp = () => {
-    // --- ESTADO Y REFS ---
-    const [leftPanelWidth, setLeftPanelWidth] = useState(55); // Usado en porcentaje
+    // --- ESTADO Y REFS (Mantenidos) ---
+    const [leftPanelWidth, setLeftPanelWidth] = useState(55); 
     /** @type {Task[]} */
     const [tasks, setTasks] = useState(initialTasks);
     /** @type {ViewModeType} */
     const [viewMode, setViewMode] = useState(ViewMode.Month);
     const [collapsedParents, setCollapsedParents] = useState({});
     const [dynamicColumns, setDynamicColumns] = useState([]);
-
-    // Estado para guardar el ancho actual de las columnas
     const [columnWidths, setColumnWidths] = useState(
         defaultColumnsDef.reduce((acc, col) => ({ ...acc, [col.id]: col.defaultSize }), {})
     );
 
-    // ESTADO Y REFS PARA REDIMENSIONAMIENTO DE COLUMNAS
     const [resizingColumnId, setResizingColumnId] = useState(null);
     const initialResizeX = useRef(0);
     const initialColumnWidth = useRef(0);
 
-    // ESTADO Y REFS PARA REDIMENSIONAMIENTO DEL SPLITTER
     const [isResizing, setIsResizing] = useState(false);
     const containerRef = useRef(null);
 
-    // --- REFS DE SCROLL ---
     const tableScrollRef = useRef(null);
     const ganttScrollRef = useRef(null);
 
     // --- LÓGICA DE PROCESAMIENTO DE TAREAS ---
-    // 1. Calcular el índice jerárquico
-    const indexedTasks = useMemo(() => calculateTaskIndices(tasks), [tasks]);
-    
-    // 2. Aplicar la lógica de Ruta Crítica (Mock)
-    const { fullTaskData: tasksWithCpm, criticalTasks } = useCriticalPathData(indexedTasks);
+    const fullTaskData = useMemo(() => calculateTaskIndices(tasks), [tasks]);
+    const criticalTasks = []; 
 
+    // --- UTILITIES Y HANDLERS (Uso de useCallback) ---
 
-    // --- UTILITIES Y HANDLERS ---
+    // 🌟🌟🌟 Función de Roll-up de Fechas (usa la implementación real) 🌟🌟🌟
     const rollupDates = useCallback((parentId, currentTasks) => {
-        return rollupParentDates(parentId, currentTasks);
-    }, []);
+        // Llama a la función de utilidad implementada
+        return rollupParentDates(parentId, currentTasks); 
+    }, []); 
+    // -----------------------------------------------------------------------
+
 
     const calculateAggregatedProgress = useCallback((parentId, currentTasks) => {
         const children = currentTasks.filter(t => t.parentId === parentId);
@@ -200,36 +202,62 @@ const ProjectGanttApp = () => {
         let totalDuration = 0;
         for (const child of children) {
             const duration = getDuration(child.start, child.end);
-            // Si es padre, recursivamente calcular su progreso antes de usarlo en el peso
-            const childProgress = child.parentId ? calculateAggregatedProgress(child.id, currentTasks) : child.progress;
+            // Si la tarea hija es un padre, llama recursivamente (aunque esto podría ser optimizado)
+            const childProgress = currentTasks.some(t => t.parentId === child.id) ? calculateAggregatedProgress(child.id, currentTasks) : child.progress;
+            
             totalWeightedProgress += (childProgress * duration);
             totalDuration += duration;
         }
         return totalDuration === 0 ? 0 : Math.round(totalWeightedProgress / totalDuration);
     }, []);
 
-    const createNewTask = useCallback((currentTasks, parentId, isMilestone) => {
-        const id = generateUniqueId(currentTasks);
-        const today = new Date().toISOString().split('T')[0];
-        const endDate = isMilestone ? today : addDays(today, 4);
+// ... dentro de ProjectGanttApp ...
 
-        return {
-            id: id, name: isMilestone ? `Hito ${id}` : `Tarea ${id}`, start: today, end: endDate,
-            progress: isMilestone ? 100 : 0, parentId: parentId, cost: 100, priority: isMilestone ? 'Alta' : 'Media',
-            dependencies: parentId || '', isMilestone: isMilestone,
-        };
-    }, []);
+const createNewTask = useCallback((currentTasks, parentId, isMilestone) => {
+    const id = generateUniqueId(currentTasks);
+    
+    // 1. Determinar la Fecha Base:
+    // Si se proporciona un parentId, buscamos la tarea padre.
+    const parentTask = parentId ? currentTasks.find(t => t.id === parentId) : null;
+    
+    // Si hay un padre, usamos su fecha de inicio y fin.
+    // Si NO hay padre (es tarea principal), o si el padre no existe, usamos la fecha de hoy.
+    const today = new Date().toISOString().split('T')[0];
+    const startDate = parentTask ? parentTask.start : today;
+    
+    // La fecha de fin es la fecha de inicio (para hitos) o 4 días después (para tareas)
+    const endDate = isMilestone 
+        ? startDate // Si es hito, fin = inicio
+        : addDays(startDate, 4); // Si es tarea, fin = inicio + 4 días
+
+    return {
+        id: id, 
+        name: isMilestone ? `Hito ${id}` : `Tarea ${id}`, 
+        start: startDate, // <--- USA LA FECHA DEL PADRE
+        end: endDate,     // <--- USA LA FECHA CALCULADA A PARTIR DEL PADRE
+        progress: isMilestone ? 100 : 0, 
+        parentId: parentId, 
+        cost: 100, 
+        priority: isMilestone ? 'Alta' : 'Media',
+        dependencies: parentId || '', 
+        isMilestone: isMilestone,
+    };
+}, [addDays]); // Asegúrate de que addDays se incluya en las dependencias si es un prop/función externa
 
     const addNewTask = useCallback((parentId = null) => {
         setTasks(prevTasks => {
             const newTask = createNewTask(prevTasks, parentId, false);
             let newTasks = [...prevTasks];
+            
             if (parentId) {
                 const lastDescendantIndex = findLastDescendantIndex(parentId, newTasks);
                 if (lastDescendantIndex !== -1) newTasks.splice(lastDescendantIndex + 1, 0, newTask);
                 else newTasks.push(newTask);
-                newTasks = rollupDates(parentId, newTasks);
+                
+                // Recalcular fechas del padre después de agregar la tarea
+                newTasks = newTasks.map(t => t.id === parentId ? { ...t, ...rollupDates(parentId, newTasks) } : t);
             } else { newTasks.push(newTask); }
+            
             return newTasks;
         });
     }, [createNewTask, rollupDates]);
@@ -238,24 +266,33 @@ const ProjectGanttApp = () => {
         setTasks(prevTasks => {
             const newMilestone = createNewTask(prevTasks, parentId, true);
             let newTasks = [...prevTasks];
+            
             if (parentId) {
                 const lastDescendantIndex = findLastDescendantIndex(parentId, newTasks);
                 if (lastDescendantIndex !== -1) newTasks.splice(lastDescendantIndex + 1, 0, newMilestone);
                 else newTasks.push(newMilestone);
-                newTasks = rollupDates(parentId, newTasks);
+                
+                // Recalcular fechas del padre después de agregar el hito
+                newTasks = newTasks.map(t => t.id === parentId ? { ...t, ...rollupDates(parentId, newTasks) } : t);
             } else { newTasks.push(newMilestone); }
+            
             return newTasks;
         });
     }, [createNewTask, rollupDates]);
+    
 
     const updateTaskData = useCallback((id, columnId, newValue) => {
         setTasks(prevTasks => {
             let updatedTasks = prevTasks.map(task => {
                 if (task.id === id) {
                     let finalValue = newValue;
+                    
+                    // 1. Conversión y Validación Numérica
                     if (columnId === 'cost' || columnId === 'progress') finalValue = parseFloat(newValue) || 0;
                     if (columnId === 'progress') finalValue = Math.min(100, Math.max(0, finalValue));
-
+                    
+                    // console.log("columna", columnId); // Log de la columna
+                    
                     return { ...task, [columnId]: finalValue };
                 }
                 return task;
@@ -263,8 +300,9 @@ const ProjectGanttApp = () => {
 
             const modifiedTask = updatedTasks.find(t => t.id === id);
 
-            // Mock: Actualizar la tarea padre con el nuevo progreso calculado
+            // 2. LÓGICA DE ROLL-UP: Progreso (Progress)
             if (modifiedTask && modifiedTask.parentId && columnId === 'progress') {
+                // console.log("Tarea modificada - Progreso:", modifiedTask.name); 
                 let parentIdToUpdate = modifiedTask.parentId;
                 while (parentIdToUpdate) {
                     const progress = calculateAggregatedProgress(parentIdToUpdate, updatedTasks);
@@ -274,9 +312,36 @@ const ProjectGanttApp = () => {
                 }
             }
 
+            // 3. LÓGICA DE ROLL-UP: Fechas (Start/End)
+            if (modifiedTask && modifiedTask.parentId && (columnId === 'start' || columnId === 'end')) {
+                // console.log("Tarea modificada - Fecha:", modifiedTask.name, columnId); 
+                
+                let parentIdToUpdate = modifiedTask.parentId;
+            
+                while (parentIdToUpdate) {
+                    // CÁLCULO: Obtiene el inicio más temprano y el fin más tardío
+                    const { start, end } = rollupDates(parentIdToUpdate, updatedTasks); 
+                    
+                    // APLICACIÓN: Actualiza ambas fechas del padre
+                    updatedTasks = updatedTasks.map(t => 
+                        t.id === parentIdToUpdate 
+                            ? { ...t, start, end } 
+                            : t
+                    );
+                    
+                    // ASCENSO: Sube al siguiente nivel (al abuelo)
+                    const parentTask = updatedTasks.find(t => t.id === parentIdToUpdate);
+                    parentIdToUpdate = parentTask ? parentTask.parentId : null;
+                }
+            }
+
             return updatedTasks;
         });
     }, [rollupDates, calculateAggregatedProgress]);
+
+    // --- El resto de funciones (Mantenidas) ---
+
+    // ... (omito funciones de redimensionamiento y UI, ya que no cambian la lógica principal) ...
 
     const addDynamicColumn = () => {
         const newColumnId = `Custom${dynamicColumns.length + 1}`;
@@ -290,7 +355,6 @@ const ProjectGanttApp = () => {
         setTasks(prevTasks => prevTasks.map(task => ({ ...task, [newColumnId]: 'Nuevo Valor' })));
     };
 
-    // --- LÓGICA DE REDIMENSIONAMIENTO DE COLUMNAS ---
     const startResizing = useCallback((columnId, e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -324,8 +388,6 @@ const ProjectGanttApp = () => {
         document.removeEventListener('mouseup', onMouseUp);
     }, [resizingColumnId, onMouseMove]);
 
-
-    // --- LÓGICA DE REDIMENSIONAMIENTO DEL SPLITTER ---
     const startResize = useCallback((e) => {
         setIsResizing(true);
         e.preventDefault();
@@ -363,20 +425,19 @@ const ProjectGanttApp = () => {
         };
     }, [isResizing, onResize, stopResize]);
 
-    // --- LÓGICA DE UI Y MEMOIZACIÓN ---
     const columns = useMemo(() => [...defaultColumnsDef, ...dynamicColumns], [dynamicColumns]);
 
     const parentIds = useMemo(() => {
-        // Tareas que son padres (ya sea porque tienen hijos o para el rollup)
-        const parentsThatHaveChildren = tasksWithCpm.map(t => t.parentId).filter(Boolean);
-        const allPossibleParents = tasksWithCpm.filter(t => !t.isMilestone).map(t => t.id);
-        return new Set([...parentsThatHaveChildren, ...allPossibleParents]);
-    }, [tasksWithCpm]);
+        const parents = fullTaskData
+            .map(t => t.parentId)
+            .filter(Boolean);
+        return new Set(parents);
+    }, [fullTaskData]);
 
     const visibleTasks = useMemo(() => {
-        if (tasksWithCpm.length === 0) return [];
-        return tasksWithCpm.filter((task) => !isTaskHidden(task, collapsedParents, tasksWithCpm));
-    }, [tasksWithCpm, collapsedParents]);
+        if (fullTaskData.length === 0) return [];
+        return fullTaskData.filter((task) => !isTaskHidden(task, collapsedParents, fullTaskData));
+    }, [fullTaskData, collapsedParents]);
 
     const toggleCollapse = useCallback((taskId) => {
         setCollapsedParents(prev => ({ ...prev, [taskId]: !prev[taskId] }));
@@ -393,7 +454,8 @@ const ProjectGanttApp = () => {
     const totalTableWidth = useMemo(() => columns.reduce((sum, col) => sum + (columnWidths[col.id] || col.defaultSize), 0), [columns, columnWidths]);
 
 
-    // --- ESTILOS INLINE ---
+    // --- Estilos y Renderizado (Mantenidos por brevedad) ---
+
     const mainAppStyle = { padding: '20px', fontFamily: 'Inter, Arial, sans-serif', backgroundColor: '#F9FAFB' };
     const headerStyle = { marginBottom: '20px', color: '#1F2937' };
     const controlsContainerStyle = { marginBottom: '15px', borderBottom: '1px solid #D1D5DB', paddingBottom: '10px', backgroundColor: "white", borderRadius: '8px', padding: '15px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' };
@@ -448,12 +510,10 @@ const ProjectGanttApp = () => {
     };
 
 
-    // --- RENDERIZADO PRINCIPAL ---
     return (
         <div style={mainAppStyle}>
-            <h1 style={headerStyle}>Gestor de Proyectos (Ruta Crítica)</h1>
+            <h1 style={headerStyle}>Gestor de Proyectos</h1>
 
-            {/* Controles */}
             <div style={controlsContainerStyle}>
                 <div style={controlItemStyle}>
                     <button onClick={() => addNewTask(null)} style={buttonStyle}>+ Tarea Principal</button>
@@ -461,10 +521,6 @@ const ProjectGanttApp = () => {
                 <div style={controlItemStyle}>
                     <button onClick={addDynamicColumn} style={secondaryButtonStyle}>+ Columna</button>
                 </div>
-
-                <p style={{ ...controlItemStyle, color: '#4B5563', margin: 0, fontWeight: '500' }}>
-                    **Ruta Crítica (Tareas Principales):** <span style={{ color: '#DC2626', fontWeight: 'bold' }}>{criticalTasks.join(', ') || 'Calculando...'}</span>
-                </p>
 
                 <div style={viewModeControlsStyle}>
                     {Object.keys(ViewMode).map(mode => (
@@ -483,10 +539,8 @@ const ProjectGanttApp = () => {
                 </div>
             </div>
 
-            {/* Panel de Split (Referenciado por containerRef) */}
             <div ref={containerRef} style={splitContainerStyle}>
 
-                {/* PANEL IZQUIERDO: TABLA DE TAREAS */}
                 <div style={{ width: `${leftPanelWidth}%`, flexShrink: 0 }}>
                     <div ref={tableScrollRef} style={tableContainerStyle} onScroll={onTableScroll}>
                         <table style={{ minWidth: totalTableWidth, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
@@ -496,7 +550,6 @@ const ProjectGanttApp = () => {
                                         <th key={column.id} style={tableHeaderCellStyle(column.id)}>
                                             <div style={{ position: 'relative', display: 'flex', alignItems: 'center', height: '100%' }}>
                                                 {column.header}
-                                                {/* RESIZE HANDLE PARA COLUMNAS */}
                                                 <div
                                                     style={resizeHandleStyle}
                                                     onMouseDown={(e) => startResizing(column.id, e)}
@@ -520,13 +573,14 @@ const ProjectGanttApp = () => {
                                                     task={task}
                                                     columnId={column.accessorKey}
                                                     updateTaskData={updateTaskData}
-                                                    allTasks={tasksWithCpm}
+                                                    allTasks={fullTaskData} 
                                                     parentIds={parentIds}
                                                     collapsedParents={collapsedParents}
                                                     toggleCollapse={toggleCollapse}
                                                     addNewTask={addNewTask}
                                                     addNewMilestone={addNewMilestone}
                                                 />
+
                                             </td>
                                         ))}
                                     </tr>
@@ -536,14 +590,12 @@ const ProjectGanttApp = () => {
                     </div>
                 </div>
 
-                {/* SPLITTER - MANEJADOR DE ARRASTRE */}
                 <div
                     onMouseDown={startResize}
                     onTouchStart={startResize}
                     style={{ width: '10px', cursor: 'col-resize', backgroundColor: '#D1D5DB', flexShrink: 0 }}
                 />
 
-                {/* PANEL DERECHO: VISTA GANTT */}
                 <div style={{ flexGrow: 1, position: 'relative', overflow: 'hidden' }}>
                     <CustomGantt
                         tasks={visibleTasks}
@@ -551,16 +603,13 @@ const ProjectGanttApp = () => {
                         scrollRef={ganttScrollRef}
                         onScroll={onGanttScroll}
                     />
-
                 </div>
             </div>
 
-            {/* Aplicar cursor de redimensionamiento a nivel global mientras se arrastra */}
             {(resizingColumnId || isResizing) && (
                 <style>{`body { cursor: col-resize !important; user-select: none; }`}</style>
             )}
         </div>
-
     );
 };
 
