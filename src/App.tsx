@@ -8,7 +8,7 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 /** @typedef {{ id: string, header: string, defaultSize: number, accessorKey: string }} ColumnDef */
 
 // [NOTA: Los imports de initialTasks, defaultColumnsDef, ViewMode, EditableCell, CustomGantt deben ser correctos en tu proyecto]
-import { initialTasks, defaultColumnsDef, ViewMode } from './constants';
+import { initialTasks, ViewMode } from './constants'; 
 import EditableCell from './components/EditableCell';
 import CustomGantt from './components/CustomGantt';
 
@@ -16,6 +16,20 @@ import CustomGantt from './components/CustomGantt';
 const ROW_HEIGHT_PX = 30;
 const BAR_HEIGHT = 25;
 const BAR_PADDING = (ROW_HEIGHT_PX - BAR_HEIGHT) / 2;
+
+// --- DEFINICIÓN DE COLUMNAS (Asegurarse de que incluya las nuevas) ---
+// Normalmente esto viene de constants.js, pero lo defino aquí para la demostración
+const defaultColumnsDef = [
+    { id: 'index', header: 'N°', defaultSize: 60, accessorKey: 'index' }, // NUEVA: Número de tarea jerárquico
+    { id: 'name', header: 'Tarea', defaultSize: 250, accessorKey: 'name' },
+    { id: 'start', header: 'Inicio', defaultSize: 100, accessorKey: 'start' },
+    { id: 'end', header: 'Fin', defaultSize: 100, accessorKey: 'end' },
+    { id: 'progress', header: 'Progreso', defaultSize: 80, accessorKey: 'progress' },
+    { id: 'totalSlack', header: 'Holgura', defaultSize: 80, accessorKey: 'totalSlack' }, // NUEVA: Holgura total
+    { id: 'cost', header: 'Costo', defaultSize: 100, accessorKey: 'cost' },
+    { id: 'priority', header: 'Prioridad', defaultSize: 100, accessorKey: 'priority' },
+    { id: 'dependencies', header: 'Precede', defaultSize: 80, accessorKey: 'dependencies' },
+];
 
 // =================================================================
 // --- UTILITIES (Funciones de Ayuda) ---
@@ -47,53 +61,29 @@ const getDuration = (start, end) => {
 };
 
 const findLastDescendantIndex = (parentId, tasks) => {
-    // 1. LOCALIZAR AL PADRE
     const parentIndex = tasks.findIndex(t => t.id === parentId);
-    
-    if (parentIndex === -1) {
-        console.log(`[Paso 1] ¡ALERTA! Padre ${parentId} no encontrado. Deteniendo.`);
-        return -1;
-    }
-
-    // Inicializar el índice del "último descendiente visto".
+    if (parentIndex === -1) return -1;
     let lastIndex = parentIndex;
 
-    // 2. RECORRER TAREAS SIGUIENTES
-    // Comenzamos a revisar las tareas a partir del índice justo después del padre.
     for (let i = parentIndex + 1; i < tasks.length; i++) {
-        
-        const currentTaskName = tasks[i].name;
-        
         let currentParentId = tasks[i].parentId;
         let isDescendant = false;
 
-        // Bucle que simula subir por el árbol genealógico de la tarea actual.
         while (currentParentId) {
-            
-            // A. ¿ES EL PADRE BUSCADO?
             if (currentParentId === parentId) {
                 isDescendant = true;
-                console.log(`  [Ascenso] ¡MATCH! "${currentTaskName}" es descendiente directo o indirecto.`);
                 break; 
             }
-            
-            // B. SUBIR UN NIVEL MÁS
             const parentTask = tasks.find(t => t.id === currentParentId);
             currentParentId = parentTask ? parentTask.parentId : null; 
         }
 
-        // --- FIN DEL CHEQUEO DE ASCENDENCIA ---
-
-        // 3. DECISIÓN
         if (isDescendant) {
-            // Si es descendiente, actualizamos el índice.
             lastIndex = i;
         } else {
-            // Si NO es descendiente, hemos salido de la rama. ¡Detener y salir!
             break; 
         }
     }
-
     return lastIndex;
 };
 
@@ -134,22 +124,14 @@ const isTaskHidden = (task, collapsedParents, allTasks) => {
 };
 
 
-// 🌟🌟🌟 IMPLEMENTACIÓN CLAVE: Lógica de Roll-up de Fechas 🌟🌟🌟
-/**
- * @param {string} parentId 
- * @param {Task[]} tasks 
- * @returns {{ start: string, end: string }} Las fechas agregadas (inicio más temprano, fin más tardío).
- */
 const rollupParentDates = (parentId, tasks) => {
     const children = tasks.filter(t => t.parentId === parentId);
     
-    // Si no hay hijos (o no son válidos), no hacemos nada
     if (children.length === 0) {
         const parent = tasks.find(t => t.id === parentId);
         return { start: parent?.start, end: parent?.end };
     }
 
-    // Convertir fechas a milisegundos para encontrar la fecha más temprana y más tardía
     const startTimestamps = children
         .map(t => new Date(t.start).getTime())
         .filter(t => !isNaN(t));
@@ -158,25 +140,181 @@ const rollupParentDates = (parentId, tasks) => {
         .map(t => new Date(t.end).getTime())
         .filter(t => !isNaN(t));
 
-    // Si no hay fechas válidas, devolvemos las del padre
     if (startTimestamps.length === 0 || endTimestamps.length === 0) {
         const parent = tasks.find(t => t.id === parentId);
         return { start: parent?.start, end: parent?.end };
     }
 
-    // Inicio agregado = Mínimo (más temprano) de los inicios de los hijos
     const earliestStart = new Date(Math.min(...startTimestamps));
-    
-    // Fin agregado = Máximo (más tardío) de los fines de los hijos
     const latestEnd = new Date(Math.max(...endTimestamps));
 
-    // Formatear de vuelta a string 'YYYY-MM-DD'
     return {
         start: earliestStart.toISOString().split('T')[0],
         end: latestEnd.toISOString().split('T')[0],
     };
 };
-// ----------------------------------------------------------------
+
+// =================================================================
+// --- UTILITIES (Para CPM - Critical Path Method) ---
+// =================================================================
+
+const getPredecessors = (taskId, tasks) => {
+    return tasks.filter(t => t.dependencies && t.dependencies.split(',').map(id => id.trim()).includes(taskId));
+};
+
+const dateToDays = (dateStr) => {
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return 0;
+    const baseDate = new Date('2000-01-01');
+    return Math.floor((date.getTime() - baseDate.getTime()) / (1000 * 60 * 60 * 24));
+};
+
+const daysToDate = (days) => {
+    const baseDate = new Date('2000-01-01');
+    const newDate = new Date(baseDate.getTime() + (days * 1000 * 60 * 60 * 24));
+    return newDate.toISOString().split('T')[0];
+};
+
+/**
+ * Función principal de cálculo de la Ruta Crítica (CPM)
+ * @param {Task[]} tasks 
+ * @returns {TaskWithCPM[]} Tareas con ES, EF, LS, LF, totalSlack, e isCritical
+ */
+/**
+ * Calcula el Método de la Ruta Crítica (CPM) con logs detallados.
+ */
+ const calculateCriticalPath = (tasks) => {
+    if (!tasks || tasks.length === 0) return [];
+
+    console.log("--- 🕵️ INICIO DE CÁLCULO CPM ---");
+    
+    // FASE 0: PREPARACIÓN DE DATOS (Mantenida)
+    let cpmTasks = tasks.map(t => ({ 
+        ...t, 
+        duration: getDuration(t.start, t.end),
+        earlyStart: t.start, 
+        earlyFinish: t.end,   
+        lateStart: '', lateFinish: '', 
+        totalSlack: 0, isCritical: false 
+    }));
+
+    console.log("Cpm tasks")
+    console.log(cpmTasks)
+    const taskMap = new Map(cpmTasks.map(t => [t.id, t]));
+    console.log("tasks map")
+    console.log(taskMap)
+
+    
+    // ----------------------------------------------------
+    // FASE 1: PASO ADELANTE (FORWARD PASS)
+    // ----------------------------------------------------
+    console.log("\n--- ➡️ FASE 1: PASO ADELANTE (Calculando Early Dates) ---");
+    for (const task of cpmTasks) {
+        let maxPredecessorFinishDay = -Infinity; 
+        console.log(-Infinity)
+        const dependencies = task.dependencies ? task.dependencies.split(',').map(id => id.trim()) : [];
+        
+        console.log(`\n[${task.id}] PROCESANDO: ${task.name} (Duración: ${task.duration} días)`);
+        
+        if (dependencies.length > 0) {
+            console.log(`  🔎 Buscando EF máximo de Predecesores: ${dependencies.join(', ')}`);
+            for (const depId of dependencies) {
+                const predecessor = taskMap.get(depId);
+                if (predecessor && predecessor.earlyFinish) {
+                    const predecessorEFDay = dateToDays(predecessor.earlyFinish);
+                    
+                    // Mostramos la comparación
+                    console.log(`    - Predecesor ${depId}: EF (Día ${predecessorEFDay}). Máximo actual: ${maxPredecessorFinishDay}`);
+                    
+                    maxPredecessorFinishDay = Math.max(
+                        maxPredecessorFinishDay, 
+                        predecessorEFDay
+                    );
+                }
+            }
+        } else {
+            console.log("  🛑 No tiene dependencias. ES usa la fecha programada.");
+        }
+        
+        // Cálculo de ES y EF
+        const earlyStartDay = isFinite(maxPredecessorFinishDay) 
+            ? maxPredecessorFinishDay + 1 
+            : dateToDays(task.start); 
+
+        const earlyFinishDay = earlyStartDay + task.duration - 1; 
+
+        task.earlyStart = daysToDate(earlyStartDay);
+        task.earlyFinish = daysToDate(earlyFinishDay);
+
+        console.log(`  Resultado: Max EF de predecesores (Día ${maxPredecessorFinishDay}).`);
+        console.log(`  -> ES: Día ${earlyStartDay} (${task.earlyStart})`);
+        console.log(`  -> EF: Día ${earlyFinishDay} (${task.earlyFinish})`);
+    }
+
+    // ----------------------------------------------------
+    // FASE 2: PASO ATRÁS (BACKWARD PASS)
+    // ----------------------------------------------------
+    
+    // 1. Determinar el Fin del Proyecto
+    const projectFinishDay = cpmTasks.reduce((max, t) => {
+        const finishDay = dateToDays(t.earlyFinish);
+        return finishDay > max ? finishDay : max;
+    }, -Infinity);
+
+    console.log(`\n--- ⬅️ FASE 2: PASO ATRÁS (Calculando Late Dates) ---`);
+    console.log(`[PROYECTO FINALIZACIÓN]: El EF máximo es el Día ${projectFinishDay}.`);
+
+    // 2. Iterar en orden inverso (CRUCIAL)
+    for (let i = cpmTasks.length - 1; i >= 0; i--) {
+        const task = cpmTasks[i];
+        const successors = getPredecessors(task.id, cpmTasks); 
+        let minSuccessorStartDay = Infinity; 
+        
+        console.log(`\n[${task.id}] PROCESANDO: ${task.name}`);
+
+        if (successors.length > 0) {
+            console.log(`  🔎 Buscando LS mínimo de Sucesores: ${successors.map(s => s.id).join(', ')}`);
+            for (const successor of successors) {
+                const successorLS = taskMap.get(successor.id);
+                const successorLSDay = dateToDays(successorLS.lateStart);
+
+                // Mostramos la comparación
+                console.log(`    - Sucesor ${successor.id}: LS (Día ${successorLSDay}). Mínimo actual: ${minSuccessorStartDay}`);
+                
+                minSuccessorStartDay = Math.min(
+                    minSuccessorStartDay, 
+                    successorLSDay
+                );
+            }
+        } else {
+            console.log(`  🛑 Tarea final (o sin sucesores). LF se iguala al Fin del Proyecto (Día ${projectFinishDay}).`);
+        }
+
+        // Cálculo de LF, LS, y Holgura
+        const lateFinishDay = isFinite(minSuccessorStartDay) 
+            ? minSuccessorStartDay - 1 
+            : projectFinishDay;        
+
+        const lateStartDay = lateFinishDay - task.duration + 1;
+
+        task.lateFinish = daysToDate(lateFinishDay);
+        task.lateStart = daysToDate(lateStartDay);
+
+        // IDENTIFICACIÓN DE CRITICIDAD
+        task.totalSlack = lateStartDay - dateToDays(task.earlyStart);
+        task.isCritical = task.totalSlack <= 0;
+
+        console.log(`  Resultado: Min LS de sucesores (Día ${minSuccessorStartDay}).`);
+        console.log(`  -> LF: Día ${lateFinishDay} (${task.lateFinish})`);
+        console.log(`  -> LS: Día ${lateStartDay} (${task.lateStart})`);
+        console.log(`  -> HOLGURA (LS - ES): ${task.totalSlack} días. CRÍTICA: ${task.isCritical ? '✅' : '❌'}`);
+    }
+
+    console.log("\n--- ✅ CÁLCULO CPM COMPLETADO (Resultado final en cpmTasks) ---");
+
+    return cpmTasks;
+};
+
 
 // =================================================================
 // --- COMPONENTE PRINCIPAL (ProjectGanttApp) ---
@@ -204,18 +342,20 @@ const ProjectGanttApp = () => {
     const tableScrollRef = useRef(null);
     const ganttScrollRef = useRef(null);
 
-    // --- LÓGICA DE PROCESAMIENTO DE TAREAS ---
-    const fullTaskData = useMemo(() => calculateTaskIndices(tasks), [tasks]);
-    const criticalTasks = []; 
+    // 🌟 LÓGICA DE PROCESAMIENTO DE TAREAS CON CPM 🌟
+    // 1. Añadir índices de jerarquía (1, 1.1, 1.1.1)
+    const tasksWithIndices = useMemo(() => calculateTaskIndices(tasks), [tasks]);
+    
+    // 2. Calcular la Ruta Crítica (CPM)
+    /** @type {TaskWithCPM[]} */
+    const fullTaskData = useMemo(() => calculateCriticalPath(tasksWithIndices), [tasksWithIndices]);
+
 
     // --- UTILITIES Y HANDLERS (Uso de useCallback) ---
 
-    // 🌟🌟🌟 Función de Roll-up de Fechas (usa la implementación real) 🌟🌟🌟
     const rollupDates = useCallback((parentId, currentTasks) => {
-        // Llama a la función de utilidad implementada
         return rollupParentDates(parentId, currentTasks); 
     }, []); 
-    // -----------------------------------------------------------------------
 
 
     const calculateAggregatedProgress = useCallback((parentId, currentTasks) => {
@@ -225,7 +365,6 @@ const ProjectGanttApp = () => {
         let totalDuration = 0;
         for (const child of children) {
             const duration = getDuration(child.start, child.end);
-            // Si la tarea hija es un padre, llama recursivamente (aunque esto podría ser optimizado)
             const childProgress = currentTasks.some(t => t.parentId === child.id) ? calculateAggregatedProgress(child.id, currentTasks) : child.progress;
             
             totalWeightedProgress += (childProgress * duration);
@@ -234,113 +373,60 @@ const ProjectGanttApp = () => {
         return totalDuration === 0 ? 0 : Math.round(totalWeightedProgress / totalDuration);
     }, []);
 
-// ... dentro de ProjectGanttApp ...
 
-const createNewTask = useCallback((currentTasks, parentId, isMilestone) => {
-    const id = generateUniqueId(currentTasks);
-    console.log(currentTasks)
-    
-    // 1. Determinar la Fecha Base:
-    // Si se proporciona un parentId, buscamos la tarea padre.
-    console.log(`Se agrego desde ${parentId}`)
-    const parentTask = parentId ? currentTasks.find(t => t.id === parentId) : null;
-    console.log("Se encontro")
-    console.log(parentTask)
-    
-    // Si hay un padre, usamos su fecha de inicio y fin.
-    // Si NO hay padre (es tarea principal), o si el padre no existe, usamos la fecha de hoy.
-    const today = new Date().toISOString().split('T')[0];
-    const startDate = parentTask ? parentTask.start : today;
-    
-    // La fecha de fin es la fecha de inicio (para hitos) o 4 días después (para tareas)
-    const endDate = isMilestone 
-        ? startDate // Si es hito, fin = inicio
-        : addDays(startDate, 4); // Si es tarea, fin = inicio + 4 días
-
-    return {
-        id: id, 
-        name: isMilestone ? `Hito ${id}` : `Tarea ${id}`, 
-        start: startDate, // <--- USA LA FECHA DEL PADRE
-        end: endDate,     // <--- USA LA FECHA CALCULADA A PARTIR DEL PADRE
-        progress: isMilestone ? 100 : 0, 
-        parentId: parentId, 
-        cost: 100, 
-        priority: isMilestone ? 'Alta' : 'Media',
-        dependencies: parentId || '', 
-        isMilestone: isMilestone,
-    };
-}, [addDays]); // Asegúrate de que addDays se incluya en las dependencias si es un prop/función externa
-
-
-const addNewTask = useCallback((parentId = null) => {
-    
-    // Log 1: Información inicial de la llamada a la función
-    console.log("=======================================");
-    console.log(">>> [addNewTask] INICIO del proceso <<<");
-    console.log("Parámetro recibido (parentId):", parentId);
-
-    setTasks(prevTasks => {
-        // Log 2: Acceso al estado anterior
-        console.log("[setTasks] Accediendo al estado anterior (prevTasks). Cantidad de tareas previas:", prevTasks.length);
+    const createNewTask = useCallback((currentTasks, parentId, isMilestone) => {
+        const id = generateUniqueId(currentTasks);
         
-        // --- 1. CREACIÓN DE LA TAREA ---
-        const newTask = createNewTask(prevTasks, parentId, false);
-        // Log 3: Tarea nueva generada
-        console.log("[setTasks] Tarea generada por createNewTask:", newTask);
-
-        // --- 2. PREPARACIÓN DEL NUEVO ESTADO ---
-        let newTasks = [...prevTasks];
-        // Log 4: Copia de tareas
-        console.log("[setTasks] Se crea una copia inmutable (newTasks) para modificar.");
+        const parentTask = parentId ? currentTasks.find(t => t.id === parentId) : null;
         
-        // --- 3. LÓGICA DE INSERCIÓN CONDICIONAL ---
-        if (parentId) {
-            // Log 5: El código entra en la rama para subtareas
-            console.log("[setTasks/if] La nueva tarea es un HIJO. Buscando el lugar de inserción...");
+        const today = new Date().toISOString().split('T')[0];
+        const startDate = parentTask ? parentTask.start : today;
+        
+        const endDate = isMilestone 
+            ? startDate 
+            : addDays(startDate, 4); 
+
+        return {
+            id: id, 
+            name: isMilestone ? `Hito ${id}` : `Tarea ${id}`, 
+            start: startDate, 
+            end: endDate,     
+            progress: isMilestone ? 100 : 0, 
+            parentId: parentId, 
+            cost: 100, 
+            priority: isMilestone ? 'Alta' : 'Media',
+            dependencies: parentId || '', 
+            isMilestone: isMilestone,
+        };
+    }, []); 
+
+
+    const addNewTask = useCallback((parentId = null) => {
+        setTasks(prevTasks => {
+            const newTask = createNewTask(prevTasks, parentId, false);
+            let newTasks = [...prevTasks];
             
-            const lastDescendantIndex = findLastDescendantIndex(parentId, newTasks);
-            // Log 6: Resultado de la búsqueda de posición
-            console.log(`[setTasks/if] Índice del ÚLTIMO descendiente del padre (${parentId}): ${lastDescendantIndex}`);
-
-            if (lastDescendantIndex !== -1) {
-                // Inserción ordenada
-                newTasks.splice(lastDescendantIndex + 1, 0, newTask);
-                // Log 7a: Inserción por splice
-                console.log("[setTasks/if] Tarea insertada con SPLICE en el índice:", lastDescendantIndex + 1);
+            if (parentId) {
+                const lastDescendantIndex = findLastDescendantIndex(parentId, newTasks);
+                if (lastDescendantIndex !== -1) {
+                    newTasks.splice(lastDescendantIndex + 1, 0, newTask);
+                } else { 
+                    newTasks.push(newTask);
+                }
+                
+                // Recalcular datos del padre
+                newTasks = newTasks.map(t => 
+                    t.id === parentId 
+                        ? { ...t, ...rollupDates(parentId, newTasks) }
+                        : t
+                );
             } else { 
-                // Inserción simple si no hay descendientes (o si es el único)
-                newTasks.push(newTask);
-                // Log 7b: Inserción por push
-                console.log("[setTasks/if] El padre NO tiene otros descendientes. Tarea insertada con PUSH al final.");
+                newTasks.push(newTask); 
             }
             
-            // --- 4. RECALCULAR DATOS DEL PADRE ---
-            // Recalcular fechas del padre después de agregar la tarea
-            console.log(`[setTasks/if] Procesando RECALCULO de fechas para el padre ID: ${parentId}`);
-
-            newTasks = newTasks.map(t => 
-                t.id === parentId 
-                    ? { ...t, ...rollupDates(parentId, newTasks) } // ¡El cambio ocurre aquí!
-                    : t
-            );
-            // Log 8: Resultado del map
-            console.log(`[setTasks/if] El padre (${parentId}) ha sido actualizado con los nuevos datos de rollupDates.`);
-            
-        } else { 
-            // El código entra en la rama para tareas principales
-            newTasks.push(newTask); 
-            // Log 9: Inserción de tarea principal
-            console.log("[setTasks/else] La nueva tarea es una tarea PRINCIPAL. Insertada con PUSH al final.");
-        }
-        
-        // Log 10: Fin del proceso y valor devuelto
-        console.log("[setTasks] Nuevo array de tareas generado. Longitud final:", newTasks.length);
-        console.log("<<< [addNewTask] FIN del proceso >>>");
-        console.log("=======================================");
-        
-        return newTasks; // Este es el valor que React usará para el nuevo estado
-    });
-}, [createNewTask, rollupDates]);
+            return newTasks; 
+        });
+    }, [createNewTask, rollupDates]);
 
     const addNewMilestone = useCallback((parentId) => {
         setTasks(prevTasks => {
@@ -367,11 +453,8 @@ const addNewTask = useCallback((parentId = null) => {
                 if (task.id === id) {
                     let finalValue = newValue;
                     
-                    // 1. Conversión y Validación Numérica
                     if (columnId === 'cost' || columnId === 'progress') finalValue = parseFloat(newValue) || 0;
                     if (columnId === 'progress') finalValue = Math.min(100, Math.max(0, finalValue));
-                    
-                    // console.log("columna", columnId); // Log de la columna
                     
                     return { ...task, [columnId]: finalValue };
                 }
@@ -382,7 +465,6 @@ const addNewTask = useCallback((parentId = null) => {
 
             // 2. LÓGICA DE ROLL-UP: Progreso (Progress)
             if (modifiedTask && modifiedTask.parentId && columnId === 'progress') {
-                // console.log("Tarea modificada - Progreso:", modifiedTask.name); 
                 let parentIdToUpdate = modifiedTask.parentId;
                 while (parentIdToUpdate) {
                     const progress = calculateAggregatedProgress(parentIdToUpdate, updatedTasks);
@@ -394,22 +476,17 @@ const addNewTask = useCallback((parentId = null) => {
 
             // 3. LÓGICA DE ROLL-UP: Fechas (Start/End)
             if (modifiedTask && modifiedTask.parentId && (columnId === 'start' || columnId === 'end')) {
-                // console.log("Tarea modificada - Fecha:", modifiedTask.name, columnId); 
-                
                 let parentIdToUpdate = modifiedTask.parentId;
             
                 while (parentIdToUpdate) {
-                    // CÁLCULO: Obtiene el inicio más temprano y el fin más tardío
                     const { start, end } = rollupDates(parentIdToUpdate, updatedTasks); 
                     
-                    // APLICACIÓN: Actualiza ambas fechas del padre
                     updatedTasks = updatedTasks.map(t => 
                         t.id === parentIdToUpdate 
                             ? { ...t, start, end } 
                             : t
                     );
                     
-                    // ASCENSO: Sube al siguiente nivel (al abuelo)
                     const parentTask = updatedTasks.find(t => t.id === parentIdToUpdate);
                     parentIdToUpdate = parentTask ? parentTask.parentId : null;
                 }
@@ -420,8 +497,6 @@ const addNewTask = useCallback((parentId = null) => {
     }, [rollupDates, calculateAggregatedProgress]);
 
     // --- El resto de funciones (Mantenidas) ---
-
-    // ... (omito funciones de redimensionamiento y UI, ya que no cambian la lógica principal) ...
 
     const addDynamicColumn = () => {
         const newColumnId = `Custom${dynamicColumns.length + 1}`;
@@ -534,7 +609,7 @@ const addNewTask = useCallback((parentId = null) => {
     const totalTableWidth = useMemo(() => columns.reduce((sum, col) => sum + (columnWidths[col.id] || col.defaultSize), 0), [columns, columnWidths]);
 
 
-    // --- Estilos y Renderizado (Mantenidos por brevedad) ---
+    // --- Estilos y Renderizado (Mantenidos) ---
 
     const mainAppStyle = { padding: '20px', fontFamily: 'Inter, Arial, sans-serif', backgroundColor: '#F9FAFB' };
     const headerStyle = { marginBottom: '20px', color: '#1F2937' };

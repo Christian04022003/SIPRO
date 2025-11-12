@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 // Definiciones de tipos y constantes asumidas
 /** @typedef {'Alta' | 'Media' | 'Baja'} PriorityType */
 /** @typedef {{ id: string, name: string, isCritical: boolean, totalSlack: number | 'N/A', index: number, priority: PriorityType, cost: number, progress: number, start: string, end: string, isMilestone?: boolean, parentId?: string }} TaskWithCPM */
-const ROW_HEIGHT_PX = 32;
+const ROW_HEIGHT_PX = 30; // Ajustado a 30px para coincidir con el App
 
 // FUNCIÓN DE PROFUNDIDAD (Mantenida)
 const getTaskDepth = (task, allTasks) => {
@@ -33,7 +33,6 @@ interface EditableCellProps {
     columnId: string;
     allTasks: TaskWithCPM[];
     updateTaskData: (id: string, columnId: string, newValue: any) => void;
-    // parentIds: Un Set<string> que contiene IDs de tareas que tienen al menos un hijo.
     parentIds: Set<string>; 
     collapsedParents: Record<string, boolean>;
     toggleCollapse: (taskId: string) => void;
@@ -49,33 +48,24 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
     const [isEditing, setIsEditing] = useState(false);
     const inputRef = useRef(null);
 
-
-
-
-    // =================================================================
-    // LÓGICA DE VALIDACIÓN CORREGIDA
-    // =================================================================
-
     // 1. Determinar si la tarea es PADRE (tiene hijos).
-    // Si la ID de la tarea actual (task.id) está en el Set 'parentIds',
-    // significa que al menos una subtarea la está usando como su parentId.
     const isParent = parentIds.has(task.id); 
-
-
-
-
-
-
-
-
+    
     // 2. Definir si el campo es CALCULADO (Solo lectura).
-    // Esto es TRUE solo si: (es un padre) AND (el campo es 'start', 'end', 'progress', o 'cost').
     const isCalculatedField = isParent && (
         columnId === 'start' || 
         columnId === 'end' || 
         columnId === 'progress' || 
         columnId === 'cost'
     );
+
+    // 3. Estilo para tareas Críticas (NUEVO)
+    const criticalStyle = task.isCritical ? {
+        backgroundColor: '#FEF2F2', // Rojo muy claro
+        borderLeft: '3px solid #DC2626', // Borde rojo para destacar la ruta
+        fontWeight: 'bold',
+    } : {};
+
 
     // Sincroniza el estado local con el valor de la tarea
     useEffect(() => { setValue(safeInitialValue); }, [safeInitialValue]);
@@ -95,7 +85,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
 
     const handleDoubleClick = () => {
         // Bloqueo: No entrar en modo edición si es un campo calculado.
-        if (isCalculatedField) {
+        if (isCalculatedField || columnId === 'index' || columnId === 'totalSlack') { // NUEVO: Bloquear index y totalSlack
             return;
         }
         
@@ -115,27 +105,37 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         alignItems: 'center',
         padding: '0 8px',
         fontSize: '14px',
-        // Estilo de cursor para indicar bloqueo
         cursor: isCalculatedField ? 'not-allowed' : 'default',
         fontWeight: 'normal', 
         color: 'inherit',
+        ...criticalStyle, // APLICAR ESTILO CRÍTICO
     };
 
-    // Estilo visual para campos de solo lectura
+    // Estilo visual para campos de solo lectura (incluye el manejo de estilo crítico)
     const calculatedStyle = {
-        backgroundColor: '#F3F4F6', // Fondo gris
+        backgroundColor: task.isCritical ? '#FCA5A5' : '#F3F4F6',
         fontStyle: 'italic',
-        color: '#6B7280', // Color de texto gris oscuro
+        color: task.isCritical ? '#991B1B' : '#6B7280',
         fontWeight: 'normal',
+        ...criticalStyle, // APLICAR ESTILO CRÍTICO
     };
 
+    // Lógica para columna 'index' (Número de Tarea) - ¡NUEVO!
+    if (columnId === 'index') {
+        return (
+            <div style={{ ...defaultCellStyle, ...calculatedStyle, justifyContent: 'center', paddingLeft: '8px' }}>
+                {value}
+            </div>
+        );
+    }
+    
     // Lógica para columna 'priority' (selector, siempre editable)
     if (columnId === 'priority') {
         return (
             <select
                 value={task.priority}
                 onChange={(e) => updateTaskData(task.id, columnId, e.target.value)}
-                style={{ height: '100%', width: '100%', padding: '0 8px', border: 'none', background: 'white', cursor: 'pointer', fontSize: '14px' }}
+                style={{ height: '100%', width: '100%', padding: '0 8px', border: 'none', background: 'white', cursor: 'pointer', fontSize: '14px', ...criticalStyle }}
             >
                 {priorityOptions.map(option => (
                     <option key={option} value={option}>{option}</option>
@@ -153,11 +153,12 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         const nameCellStyle = {
             ...defaultCellStyle,
             paddingLeft: `${depth * 20 + 8}px`, 
-            backgroundColor: isCollapsed ? '#F3F4F6' : 'transparent',
+            backgroundColor: isCollapsed ? '#F3F4F6' : (task.isCritical ? '#FEF2F2' : 'transparent'), // Ajuste para el colapso crítico
             cursor: 'default',
             fontWeight: 'normal', 
             color: '#1F2937', 
-            justifyContent: 'space-between'
+            justifyContent: 'space-between',
+            ...criticalStyle,
         };
 
         const toggleIconStyle = {
@@ -238,7 +239,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         );
     }
 
-    // Renderizado y formateo de celdas normales (omitiendo por brevedad)
+    // Renderizado y formateo de celdas normales
     let formattedValue = value;
     if (columnId === 'cost') {
         formattedValue = `$${(parseFloat(value) || 0).toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
@@ -257,6 +258,17 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         formattedValue = <span style={{ color: floatColor, fontWeight: 'bold' }}>{slackValue === 'N/A' ? slackValue : `${slackValue} días`}</span>;
     }
     
+    // Lógica para columna 'totalSlack' (Holgura) - ¡NUEVO!
+    if (columnId === 'totalSlack') {
+        // La celda de Holgura Total debe ser SIEMPRE de solo lectura
+        return (
+            <div style={{ ...defaultCellStyle, ...calculatedStyle, justifyContent: 'center' }}>
+                {formattedValue}
+            </div>
+        );
+    }
+
+
     // Si es un campo calculado (Padre y campo de resumen), aplica el estilo de solo lectura
     if (isCalculatedField) {
         return (
