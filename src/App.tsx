@@ -5,7 +5,7 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 /** @typedef {'Alta' | 'Media' | 'Baja'} PriorityType */
 /** @typedef {{ id: string, name: string, start: string, end: string, progress: number, parentId: string | null, cost: number, priority: PriorityType, dependencies: string, isMilestone: boolean, index?: string, [key: string]: any }} Task */
 /** @typedef {Task & { duration: number, earlyStart: string, earlyFinish: string, lateStart: string, lateFinish: string, totalSlack: number, isCritical: boolean }} TaskWithCPM */
-/** @typedef {{ id: string, header: string, defaultSize: number, accessorKey: string }} ColumnDef */
+/** @typedef {{ id: string, header: string, defaultSize: number, accessorKey: string, type?: 'date' | 'cost' | 'text' | 'priority' | 'number' }} ColumnDef */
 
 // [NOTA: Los imports de initialTasks, defaultColumnsDef, ViewMode, EditableCell, CustomGantt deben ser correctos en tu proyecto]
 import { initialTasks, ViewMode } from './constants'; 
@@ -17,22 +17,42 @@ const ROW_HEIGHT_PX = 30;
 const BAR_HEIGHT = 25;
 const BAR_PADDING = (ROW_HEIGHT_PX - BAR_HEIGHT) / 2;
 
-// --- DEFINICIÓN DE COLUMNAS (Asegurarse de que incluya las nuevas) ---
-// Normalmente esto viene de constants.js, pero lo defino aquí para la demostración
+// --- DEFINICIÓN DE COLUMNAS (Se ha expandido para incluir las métricas CPM) ---
 const defaultColumnsDef = [
-    { id: 'index', header: 'N°', defaultSize: 60, accessorKey: 'index' }, // NUEVA: Número de tarea jerárquico
-    { id: 'name', header: 'Tarea', defaultSize: 250, accessorKey: 'name' },
-    { id: 'start', header: 'Inicio', defaultSize: 100, accessorKey: 'start' },
-    { id: 'end', header: 'Fin', defaultSize: 100, accessorKey: 'end' },
-    { id: 'progress', header: 'Progreso', defaultSize: 80, accessorKey: 'progress' },
-    { id: 'totalSlack', header: 'Holgura', defaultSize: 80, accessorKey: 'totalSlack' }, // NUEVA: Holgura total
-    { id: 'cost', header: 'Costo', defaultSize: 100, accessorKey: 'cost' },
-    { id: 'priority', header: 'Prioridad', defaultSize: 100, accessorKey: 'priority' },
-    { id: 'dependencies', header: 'Precede', defaultSize: 80, accessorKey: 'dependencies' },
+    { id: 'index', header: 'N°', defaultSize: 60, accessorKey: 'index', type: 'text' },
+    { id: 'name', header: 'Tarea', defaultSize: 250, accessorKey: 'name', type: 'text' },
+    
+    // Fechas Programadas
+    { id: 'start', header: 'Inicio Prog.', defaultSize: 100, accessorKey: 'start', type: 'date' },
+    { id: 'end', header: 'Fin Prog.', defaultSize: 100, accessorKey: 'end', type: 'date' },
+    
+    // Fechas CPM
+    { id: 'earlyStart', header: 'ES', defaultSize: 100, accessorKey: 'earlyStart', type: 'date' },
+    { id: 'earlyFinish', header: 'EF', defaultSize: 100, accessorKey: 'earlyFinish', type: 'date' },
+    { id: 'lateStart', header: 'LS', defaultSize: 100, accessorKey: 'lateStart', type: 'date' },
+    { id: 'lateFinish', header: 'LF', defaultSize: 100, accessorKey: 'lateFinish', type: 'date' },
+    
+    // Métricas
+    { id: 'totalSlack', header: 'Holgura (d)', defaultSize: 90, accessorKey: 'totalSlack', type: 'number' }, 
+    { id: 'progress', header: 'Progreso (%)', defaultSize: 90, accessorKey: 'progress', type: 'number' },
+    
+    // Otros
+    { id: 'cost', header: 'Costo ($)', defaultSize: 100, accessorKey: 'cost', type: 'cost' },
+    { id: 'priority', header: 'Prioridad', defaultSize: 100, accessorKey: 'priority', type: 'priority' },
+    { id: 'dependencies', header: 'Precede', defaultSize: 80, accessorKey: 'dependencies', type: 'text' },
 ];
+
+const availableColumnTypes = [
+    { id: 'text', name: 'Texto', initialValue: 'Nuevo Valor', size: 150 },
+    { id: 'date', name: 'Fecha', initialValue: new Date().toISOString().split('T')[0], size: 100 },
+    { id: 'number', name: 'Número', initialValue: 0, size: 80 },
+    { id: 'cost', name: 'Costo (Doble Columna)', initialValue: 0, size: 100 }, // Trigger para 2 columnas
+];
+
 
 // =================================================================
 // --- UTILITIES (Funciones de Ayuda) ---
+// ... (Toda la sección de UTILITIES se mantiene igual)
 // =================================================================
 
 const generateUniqueId = (tasks) => {
@@ -177,18 +197,11 @@ const daysToDate = (days) => {
 
 /**
  * Función principal de cálculo de la Ruta Crítica (CPM)
- * @param {Task[]} tasks 
- * @returns {TaskWithCPM[]} Tareas con ES, EF, LS, LF, totalSlack, e isCritical
- */
-/**
- * Calcula el Método de la Ruta Crítica (CPM) con logs detallados.
  */
  const calculateCriticalPath = (tasks) => {
     if (!tasks || tasks.length === 0) return [];
-
-    console.log("--- 🕵️ INICIO DE CÁLCULO CPM ---");
     
-    // FASE 0: PREPARACIÓN DE DATOS (Mantenida)
+    // FASE 0: PREPARACIÓN DE DATOS
     let cpmTasks = tasks.map(t => ({ 
         ...t, 
         duration: getDuration(t.start, t.end),
@@ -198,43 +211,27 @@ const daysToDate = (days) => {
         totalSlack: 0, isCritical: false 
     }));
 
-    console.log("Cpm tasks")
-    console.log(cpmTasks)
     const taskMap = new Map(cpmTasks.map(t => [t.id, t]));
-    console.log("tasks map")
-    console.log(taskMap)
-
     
     // ----------------------------------------------------
     // FASE 1: PASO ADELANTE (FORWARD PASS)
     // ----------------------------------------------------
-    console.log("\n--- ➡️ FASE 1: PASO ADELANTE (Calculando Early Dates) ---");
     for (const task of cpmTasks) {
         let maxPredecessorFinishDay = -Infinity; 
-        console.log(-Infinity)
         const dependencies = task.dependencies ? task.dependencies.split(',').map(id => id.trim()) : [];
         
-        console.log(`\n[${task.id}] PROCESANDO: ${task.name} (Duración: ${task.duration} días)`);
-        
         if (dependencies.length > 0) {
-            console.log(`  🔎 Buscando EF máximo de Predecesores: ${dependencies.join(', ')}`);
             for (const depId of dependencies) {
                 const predecessor = taskMap.get(depId);
                 if (predecessor && predecessor.earlyFinish) {
                     const predecessorEFDay = dateToDays(predecessor.earlyFinish);
-                    
-                    // Mostramos la comparación
-                    console.log(`    - Predecesor ${depId}: EF (Día ${predecessorEFDay}). Máximo actual: ${maxPredecessorFinishDay}`);
-                    
                     maxPredecessorFinishDay = Math.max(
                         maxPredecessorFinishDay, 
                         predecessorEFDay
                     );
                 }
             }
-        } else {
-            console.log("  🛑 No tiene dependencias. ES usa la fecha programada.");
-        }
+        } 
         
         // Cálculo de ES y EF
         const earlyStartDay = isFinite(maxPredecessorFinishDay) 
@@ -245,10 +242,6 @@ const daysToDate = (days) => {
 
         task.earlyStart = daysToDate(earlyStartDay);
         task.earlyFinish = daysToDate(earlyFinishDay);
-
-        console.log(`  Resultado: Max EF de predecesores (Día ${maxPredecessorFinishDay}).`);
-        console.log(`  -> ES: Día ${earlyStartDay} (${task.earlyStart})`);
-        console.log(`  -> EF: Día ${earlyFinishDay} (${task.earlyFinish})`);
     }
 
     // ----------------------------------------------------
@@ -261,34 +254,23 @@ const daysToDate = (days) => {
         return finishDay > max ? finishDay : max;
     }, -Infinity);
 
-    console.log(`\n--- ⬅️ FASE 2: PASO ATRÁS (Calculando Late Dates) ---`);
-    console.log(`[PROYECTO FINALIZACIÓN]: El EF máximo es el Día ${projectFinishDay}.`);
-
     // 2. Iterar en orden inverso (CRUCIAL)
     for (let i = cpmTasks.length - 1; i >= 0; i--) {
         const task = cpmTasks[i];
         const successors = getPredecessors(task.id, cpmTasks); 
         let minSuccessorStartDay = Infinity; 
         
-        console.log(`\n[${task.id}] PROCESANDO: ${task.name}`);
-
         if (successors.length > 0) {
-            console.log(`  🔎 Buscando LS mínimo de Sucesores: ${successors.map(s => s.id).join(', ')}`);
             for (const successor of successors) {
                 const successorLS = taskMap.get(successor.id);
                 const successorLSDay = dateToDays(successorLS.lateStart);
-
-                // Mostramos la comparación
-                console.log(`    - Sucesor ${successor.id}: LS (Día ${successorLSDay}). Mínimo actual: ${minSuccessorStartDay}`);
                 
                 minSuccessorStartDay = Math.min(
                     minSuccessorStartDay, 
                     successorLSDay
                 );
             }
-        } else {
-            console.log(`  🛑 Tarea final (o sin sucesores). LF se iguala al Fin del Proyecto (Día ${projectFinishDay}).`);
-        }
+        } 
 
         // Cálculo de LF, LS, y Holgura
         const lateFinishDay = isFinite(minSuccessorStartDay) 
@@ -303,14 +285,7 @@ const daysToDate = (days) => {
         // IDENTIFICACIÓN DE CRITICIDAD
         task.totalSlack = lateStartDay - dateToDays(task.earlyStart);
         task.isCritical = task.totalSlack <= 0;
-
-        console.log(`  Resultado: Min LS de sucesores (Día ${minSuccessorStartDay}).`);
-        console.log(`  -> LF: Día ${lateFinishDay} (${task.lateFinish})`);
-        console.log(`  -> LS: Día ${lateStartDay} (${task.lateStart})`);
-        console.log(`  -> HOLGURA (LS - ES): ${task.totalSlack} días. CRÍTICA: ${task.isCritical ? '✅' : '❌'}`);
     }
-
-    console.log("\n--- ✅ CÁLCULO CPM COMPLETADO (Resultado final en cpmTasks) ---");
 
     return cpmTasks;
 };
@@ -341,22 +316,24 @@ const ProjectGanttApp = () => {
 
     const tableScrollRef = useRef(null);
     const ganttScrollRef = useRef(null);
+    
+    // --- ESTADO PARA LA CONFIGURACIÓN DE COLUMNAS ---
+    const [isAddingColumn, setIsAddingColumn] = useState(false);
+    const [newColumnName, setNewColumnName] = useState('Campo Personalizado');
+    const [newColumnType, setNewColumnType] = useState('text');
+
 
     // 🌟 LÓGICA DE PROCESAMIENTO DE TAREAS CON CPM 🌟
-    // 1. Añadir índices de jerarquía (1, 1.1, 1.1.1)
     const tasksWithIndices = useMemo(() => calculateTaskIndices(tasks), [tasks]);
-    
-    // 2. Calcular la Ruta Crítica (CPM)
     /** @type {TaskWithCPM[]} */
     const fullTaskData = useMemo(() => calculateCriticalPath(tasksWithIndices), [tasksWithIndices]);
 
 
-    // --- UTILITIES Y HANDLERS (Uso de useCallback) ---
+    // --- UTILITIES Y HANDLERS ---
 
     const rollupDates = useCallback((parentId, currentTasks) => {
         return rollupParentDates(parentId, currentTasks); 
     }, []); 
-
 
     const calculateAggregatedProgress = useCallback((parentId, currentTasks) => {
         const children = currentTasks.filter(t => t.parentId === parentId);
@@ -401,6 +378,7 @@ const ProjectGanttApp = () => {
     }, []); 
 
 
+    // ... (addNewTask, addNewMilestone, updateTaskData se mantienen igual)
     const addNewTask = useCallback((parentId = null) => {
         setTasks(prevTasks => {
             const newTask = createNewTask(prevTasks, parentId, false);
@@ -496,19 +474,72 @@ const ProjectGanttApp = () => {
         });
     }, [rollupDates, calculateAggregatedProgress]);
 
+    // --- NUEVA LÓGICA PARA COLUMNAS DINÁMICAS ---
+
+    const handleColumnAddition = useCallback(() => {
+        if (!newColumnName.trim()) return;
+
+        const typeDef = availableColumnTypes.find(t => t.id === newColumnType);
+        const baseId = `Custom${Date.now().toString().slice(-4)}`;
+        let newColumns = [];
+
+        if (newColumnType === 'cost') {
+            // Caso especial: Columna de Costo doble
+            newColumns = [
+                { id: `${baseId}_budget`, header: `${newColumnName} (Presup.)`, defaultSize: 100, accessorKey: `${baseId}_budget`, type: 'number' },
+                { id: `${baseId}_actual`, header: `${newColumnName} (Real)`, defaultSize: 100, accessorKey: `${baseId}_actual`, type: 'number' },
+            ];
+        } else {
+            // Caso simple: Texto, Fecha, Número
+            newColumns = [
+                { id: baseId, header: newColumnName, defaultSize: typeDef.size, accessorKey: baseId, type: newColumnType },
+            ];
+        }
+
+        // 1. Agregar las nuevas columnas a la definición de columnas dinámicas
+        setDynamicColumns(prev => [...prev, ...newColumns]);
+
+        // 2. Asignar anchos y agregar valores iniciales a las tareas
+        setColumnWidths(prev => {
+            const newWidths = {};
+            newColumns.forEach(col => {
+                newWidths[col.id] = col.defaultSize;
+            });
+            return { ...prev, ...newWidths };
+        });
+
+        setTasks(prevTasks => prevTasks.map(task => {
+            let taskUpdate = { ...task };
+            newColumns.forEach(col => {
+                // Usar el valor inicial predefinido según el tipo
+                const initialValue = typeDef.initialValue;
+                taskUpdate[col.accessorKey] = (col.type === 'number') ? parseFloat(initialValue) : initialValue;
+            });
+            return taskUpdate;
+        }));
+
+        // 3. Resetear el modal
+        setIsAddingColumn(false);
+        setNewColumnName('Campo Personalizado');
+
+    }, [newColumnName, newColumnType, setTasks]);
+
+
+    // --- LÓGICA PARA EDICIÓN DEL ENCABEZADO ---
+    const updateColumnHeader = useCallback((columnId, newHeader) => {
+        if (newHeader.trim() === '') return;
+
+        setDynamicColumns(prev => 
+            prev.map(col => 
+                col.id === columnId 
+                    ? { ...col, header: newHeader } 
+                    : col
+            )
+        );
+    }, []);
+
+
     // --- El resto de funciones (Mantenidas) ---
-
-    const addDynamicColumn = () => {
-        const newColumnId = `Custom${dynamicColumns.length + 1}`;
-        const newColumn = {
-            id: newColumnId, header: `Campo ${dynamicColumns.length + 1}`, defaultSize: 150, accessorKey: newColumnId,
-        };
-        setDynamicColumns(prev => [...prev, newColumn]);
-
-        setColumnWidths(prev => ({ ...prev, [newColumnId]: newColumn.defaultSize }));
-
-        setTasks(prevTasks => prevTasks.map(task => ({ ...task, [newColumnId]: 'Nuevo Valor' })));
-    };
 
     const startResizing = useCallback((columnId, e) => {
         e.preventDefault();
@@ -603,13 +634,61 @@ const ProjectGanttApp = () => {
             targetRef.current.scrollTop = scrollingElement.scrollTop;
         }
     };
-    const onTableScroll = (e) => handleScroll(e.currentTarget, ganttScrollRef);
-    const onGanttScroll = (e) => handleScroll(e.currentTarget, tableScrollRef);
+    const onTableScroll = (e) => handleScroll(e.currentTarget, tableScrollRef);
+    const onGanttScroll = (e) => handleScroll(e.currentTarget, ganttScrollRef);
 
     const totalTableWidth = useMemo(() => columns.reduce((sum, col) => sum + (columnWidths[col.id] || col.defaultSize), 0), [columns, columnWidths]);
 
 
-    // --- Estilos y Renderizado (Mantenidos) ---
+    // --- Componente de Edición de Encabezado (Inline) ---
+    const HeaderEditor = ({ column, updateHeader }) => {
+        const [isEditing, setIsEditing] = useState(false);
+        const [inputValue, setInputValue] = useState(column.header);
+
+        const handleBlur = () => {
+            if (inputValue.trim() && inputValue !== column.header) {
+                updateHeader(column.id, inputValue);
+            } else {
+                setInputValue(column.header); // Revertir si está vacío
+            }
+            setIsEditing(false);
+        };
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Enter') {
+                handleBlur();
+            }
+        };
+
+        if (isEditing) {
+            return (
+                <input
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onBlur={handleBlur}
+                    onKeyDown={handleKeyDown}
+                    style={{ border: '1px solid #4F46E5', padding: '2px', width: '90%' }}
+                    autoFocus
+                />
+            );
+        }
+
+        // Solo permitir la edición de columnas dinámicas
+        const isDynamic = dynamicColumns.some(c => c.id === column.id);
+
+        return (
+            <span 
+                onDoubleClick={() => isDynamic && setIsEditing(true)}
+                title={isDynamic ? "Doble clic para editar" : column.header}
+                style={{ cursor: isDynamic ? 'text' : 'default', minHeight: '20px', display: 'inline-block' }}
+            >
+                {column.header}
+            </span>
+        );
+    };
+
+
+    // --- Estilos y Renderizado ---
 
     const mainAppStyle = { padding: '20px', fontFamily: 'Inter, Arial, sans-serif', backgroundColor: '#F9FAFB' };
     const headerStyle = { marginBottom: '20px', color: '#1F2937' };
@@ -642,7 +721,8 @@ const ProjectGanttApp = () => {
         color: '#374151',
         fontWeight: 'bold',
         zIndex: 1,
-        backgroundColor: '#F3F4F6'
+        backgroundColor: '#F3F4F6',
+        paddingRight: '12px' // Espacio para el handle
     });
 
     const tableCellWrapperStyle = (columnId) => ({
@@ -663,18 +743,87 @@ const ProjectGanttApp = () => {
         backgroundColor: resizingColumnId ? '#4F46E5' : 'transparent',
         zIndex: 2,
     };
+    
+    // Estilos del Modal
+    const modalOverlayStyle = {
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+        backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', 
+        justifyContent: 'center', alignItems: 'center'
+    };
+    const modalContentStyle = {
+        backgroundColor: 'white', padding: '25px', borderRadius: '10px', 
+        boxShadow: '0 5px 15px rgba(0,0,0,0.3)', width: '350px', 
+        fontFamily: 'Inter',
+    };
+    const inputStyle = { width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', marginTop: '5px' };
 
 
     return (
         <div style={mainAppStyle}>
             <h1 style={headerStyle}>Gestor de Proyectos</h1>
 
+            {/* --- Formulario de Configuración de Columna (Modal) --- */}
+            {isAddingColumn && (
+                <div style={modalOverlayStyle}>
+                    <div style={modalContentStyle}>
+                        <h2 style={{fontSize: '1.5rem', marginBottom: '15px', color: '#1F2937'}}>Agregar Nueva Columna</h2>
+                        
+                        <label style={{display: 'block', marginBottom: '10px', fontWeight: '600'}}>
+                            Nombre de la Columna:
+                            <input 
+                                type="text" 
+                                value={newColumnName} 
+                                onChange={(e) => setNewColumnName(e.target.value)} 
+                                style={inputStyle}
+                            />
+                        </label>
+
+                        <label style={{display: 'block', marginBottom: '20px', fontWeight: '600'}}>
+                            Tipo de Dato:
+                            <select 
+                                value={newColumnType} 
+                                onChange={(e) => setNewColumnType(e.target.value)}
+                                style={inputStyle}
+                            >
+                                {availableColumnTypes.map(type => (
+                                    <option key={type.id} value={type.id}>
+                                        {type.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                            <button 
+                                onClick={() => setIsAddingColumn(false)} 
+                                style={{ ...buttonStyle, backgroundColor: '#6B7280' }}
+                            >
+                                Cancelar
+                            </button>
+                            <button 
+                                onClick={handleColumnAddition} 
+                                disabled={!newColumnName.trim()}
+                                style={{ ...secondaryButtonStyle, margin: 0 }}
+                            >
+                                Agregar Columna(s)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+
             <div style={controlsContainerStyle}>
                 <div style={controlItemStyle}>
                     <button onClick={() => addNewTask(null)} style={buttonStyle}>+ Tarea Principal</button>
                 </div>
                 <div style={controlItemStyle}>
-                    <button onClick={addDynamicColumn} style={secondaryButtonStyle}>+ Columna</button>
+                    <button 
+                        onClick={() => setIsAddingColumn(true)} 
+                        style={secondaryButtonStyle}
+                    >
+                        + Columna Personalizada
+                    </button>
                 </div>
 
                 <div style={viewModeControlsStyle}>
@@ -704,7 +853,13 @@ const ProjectGanttApp = () => {
                                     {columns.map(column => (
                                         <th key={column.id} style={tableHeaderCellStyle(column.id)}>
                                             <div style={{ position: 'relative', display: 'flex', alignItems: 'center', height: '100%' }}>
-                                                {column.header}
+                                                
+                                                {/* Renderizado del Encabezado (Editable para columnas dinámicas) */}
+                                                <HeaderEditor 
+                                                    column={column} 
+                                                    updateHeader={updateColumnHeader} 
+                                                />
+
                                                 <div
                                                     style={resizeHandleStyle}
                                                     onMouseDown={(e) => startResizing(column.id, e)}
