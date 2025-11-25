@@ -1,0 +1,65 @@
+/* Estilos básicos para las nuevas filas de encabezado */
+.table-header-row {
+    display: flex; /* Contenedor principal para las dos filas */
+    flex-direction: column;
+    overflow: hidden; /* Importante para que no haya scroll interno */
+    position: sticky;
+    top: 0;
+    background: #f7f7f7;
+    z-index: 10;
+}
+
+.header-row {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+}
+
+.header-sort-row {
+    border-bottom: 1px solid #ccc;
+}
+
+.header-cell {
+    flex-shrink: 0;
+    border-right: 1px solid #eee;
+    border-top: 1px solid #ccc;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 0;
+    box-sizing: border-box;
+    font-weight: 500;
+    /* Para el ordenamiento */
+    transition: background-color 0.1s;
+}
+
+.header-sort-row .header-cell {
+    /* Estilos solo para la fila de ordenamiento */
+    text-align: center;
+}
+
+.header-sort-row .header-cell:hover {
+    background-color: #e0e0e0;
+}
+
+.is-sorted {
+    background-color: #d0eaff; /* Color para columna ordenada */
+}
+
+.filter-cell {
+    padding: 0 4px;
+    border-bottom: 1px solid #ccc;
+}
+
+.filter-cell input {
+    /* Estilos del input de filtro */
+    font-size: 0.85em;
+    height: 24px;
+}
+
+/* Asegúrate de que las filas del cuerpo también usen flexbox */
+.table-row {
+    display: flex;
+    flex-direction: row;
+}

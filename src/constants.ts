@@ -37,13 +37,25 @@ export const initialTasks = [
 ];
 
 export const defaultColumnsDef = [
-    { id: 'index', header: 'Índice', defaultSize: 70, accessorKey: 'index' }, 
-    { id: 'name', header: 'Tarea', defaultSize: 250, accessorKey: 'name' }, // Más grande para nombres largos
-    { id: 'start', header: 'Inicio', defaultSize: 100, accessorKey: 'start' },
-    { id: 'end', header: 'Fin', defaultSize: 100, accessorKey: 'end' },
-    { id: 'progress', header: 'Progreso (%)', defaultSize: 100, accessorKey: 'progress' },
-    { id: 'totalSlack', header: 'Holgura (d)', defaultSize: 100, accessorKey: 'totalSlack' },
-    { id: 'cost', header: 'Costo ($)', defaultSize: 100, accessorKey: 'cost' },
-    { id: 'priority', header: 'Prioridad', defaultSize: 100, accessorKey: 'priority' },
-    { id: 'dependencies', header: 'Dependencias', defaultSize: 120, accessorKey: 'dependencies' },
+    { id: 'index', header: 'N°', defaultSize: 60, accessorKey: 'index', type: 'text' },
+    { id: 'name', header: 'Tarea', defaultSize: 250, accessorKey: 'name', type: 'text' },
+    { id: 'duration', header: 'Duración (d)', defaultSize: 80, accessorKey: 'duration', type: 'number' },
+    { id: 'start', header: 'Inicio Prog.', defaultSize: 100, accessorKey: 'start', type: 'date' },
+    { id: 'end', header: 'Fin Prog.', defaultSize: 100, accessorKey: 'end', type: 'date' },
+    { id: 'earlyStart', header: 'ES', defaultSize: 100, accessorKey: 'earlyStart', type: 'date' },
+    { id: 'earlyFinish', header: 'EF', defaultSize: 100, accessorKey: 'earlyFinish', type: 'date' },
+    { id: 'lateStart', header: 'LS', defaultSize: 100, accessorKey: 'lateStart', type: 'date' },
+    { id: 'lateFinish', header: 'LF', defaultSize: 100, accessorKey: 'lateFinish', type: 'date' },
+    { id: 'totalSlack', header: 'Holgura (d)', defaultSize: 90, accessorKey: 'totalSlack', type: 'number' },
+    { id: 'progress', header: 'Progreso (%)', defaultSize: 90, accessorKey: 'progress', type: 'number' },
+    { id: 'cost', header: 'Costo ($)', defaultSize: 100, accessorKey: 'cost', type: 'cost' },
+    { id: 'priority', header: 'Prioridad', defaultSize: 100, accessorKey: 'priority', type: 'priority' },
+    { id: 'dependencies', header: 'Precede', defaultSize: 80, accessorKey: 'dependencies', type: 'text' },
+];
+
+export const availableColumnTypes = [
+    { id: 'text', name: 'Texto', initialValue: 'Nuevo Valor', size: 150 },
+    { id: 'date', name: 'Fecha', initialValue: new Date().toISOString().split('T')[0], size: 100 },
+    { id: 'number', name: 'Número', initialValue: 0, size: 80 },
+    { id: 'cost', name: 'Costo (Doble Columna)', initialValue: 0, size: 100 },
 ];
