@@ -1,9 +1,28 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 
-// Definiciones de tipos y constantes asumidas
+// ==========================================================
+// DEFINICIONES Y UTILIDADES (Mantenidas)
+// ==========================================================
+
 /** @typedef {'Alta' | 'Media' | 'Baja'} PriorityType */
-/** @typedef {{ id: string, name: string, isCritical: boolean, totalSlack: number | 'N/A', index: number, priority: PriorityType, cost: number, progress: number, start: string, end: string, isMilestone?: boolean, parentId?: string }} TaskWithCPM */
-const ROW_HEIGHT_PX = 30; // Ajustado a 30px para coincidir con el App
+/** * @typedef {{ 
+ * id: string, 
+ * name: string, 
+ * isCritical: boolean, 
+ * totalSlack: number | 'N/A', 
+ * index: string, 
+ * priority: PriorityType, 
+ * cost: number, 
+ * progress: number, 
+ * start: string, 
+ * end: string, 
+ * isMilestone?: boolean, 
+ * parentId?: string, 
+ * dependencies: string[], // ⬅️ Array simple de IDs para la columna
+ * dependenciesDetails: string, // String complejo para el modal
+ * }} TaskWithCPM 
+ */
+const ROW_HEIGHT_PX = 30; 
 
 // FUNCIÓN DE PROFUNDIDAD (Mantenida)
 const getTaskDepth = (task, allTasks) => {
@@ -26,23 +45,24 @@ const getTaskDepth = (task, allTasks) => {
 };
 // ----------------------------------------------------------------
 
+const EditableCell = React.memo(
+    // @ts-ignore
+    ({ 
+        initialValue, 
+        task, 
+        columnId, 
+        allTasks, 
+        updateTaskData, 
+        parentIds, 
+        collapsedParents, 
+        toggleCollapse, 
+        addNewTask, 
+        addNewMilestone,
+        onManageDependencies,
+        deleteTask 
+    }) => {
 
-interface EditableCellProps {
-    value: any;
-    task: TaskWithCPM;
-    columnId: string;
-    allTasks: TaskWithCPM[];
-    updateTaskData: (id: string, columnId: string, newValue: any) => void;
-    parentIds: Set<string>; 
-    collapsedParents: Record<string, boolean>;
-    toggleCollapse: (taskId: string) => void;
-    addNewTask: (parentId: string | null) => void;
-    addNewMilestone: (parentId: string | null) => void;
-    initialValue: any; 
-}
-
-const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updateTaskData, parentIds, collapsedParents, toggleCollapse, addNewTask, addNewMilestone }) => {
-
+    const isDependencyColumn = columnId === 'dependencies';
     const safeInitialValue = String(initialValue ?? '');
     const [value, setValue] = useState(safeInitialValue);
     const [isEditing, setIsEditing] = useState(false);
@@ -59,10 +79,10 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         columnId === 'cost'
     );
 
-    // 3. Estilo para tareas Críticas (NUEVO)
+    // 3. Estilo para tareas Críticas
     const criticalStyle = task.isCritical ? {
-        backgroundColor: '#FEF2F2', // Rojo muy claro
-        borderLeft: '3px solid #DC2626', // Borde rojo para destacar la ruta
+        backgroundColor: '#FEF2F2', 
+        borderLeft: '3px solid #DC2626', 
         fontWeight: 'bold',
     } : {};
 
@@ -72,9 +92,11 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
 
     const onBlur = () => {
         setIsEditing(false);
-        // Bloqueo: No actualizar si es un campo calculado.
         if (!isCalculatedField && String(value) !== String(initialValue)) {
-            updateTaskData(task.id, columnId, value);
+            // Nota: Para la columna 'dependencies', la actualización va vía el modal.
+            if (!isDependencyColumn) { 
+                 updateTaskData(task.id, columnId, value);
+            }
         }
     };
 
@@ -84,8 +106,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
     };
 
     const handleDoubleClick = () => {
-        // Bloqueo: No entrar en modo edición si es un campo calculado.
-        if (isCalculatedField || columnId === 'index' || columnId === 'totalSlack') { // NUEVO: Bloquear index y totalSlack
+        if (isCalculatedField || columnId === 'index' || columnId === 'totalSlack' || isDependencyColumn) { 
             return;
         }
         
@@ -96,7 +117,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
     /** @type {PriorityType[]} */
     const priorityOptions = ['Alta', 'Media', 'Baja'];
 
-    // Estilos de la celda
+    // Estilos base
     const defaultCellStyle = {
         height: `${ROW_HEIGHT_PX}px`,
         width: '100%',
@@ -108,19 +129,20 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         cursor: isCalculatedField ? 'not-allowed' : 'default',
         fontWeight: 'normal', 
         color: 'inherit',
-        ...criticalStyle, // APLICAR ESTILO CRÍTICO
+        ...criticalStyle,
     };
 
-    // Estilo visual para campos de solo lectura (incluye el manejo de estilo crítico)
     const calculatedStyle = {
         backgroundColor: task.isCritical ? '#FCA5A5' : '#F3F4F6',
         fontStyle: 'italic',
         color: task.isCritical ? '#991B1B' : '#6B7280',
         fontWeight: 'normal',
-        ...criticalStyle, // APLICAR ESTILO CRÍTICO
+        ...criticalStyle, 
     };
 
-    // Lógica para columna 'index' (Número de Tarea) - ¡NUEVO!
+    // --- Lógica de Columnas Especiales ---
+
+    // Columna 'index' (Número de Tarea)
     if (columnId === 'index') {
         return (
             <div style={{ ...defaultCellStyle, ...calculatedStyle, justifyContent: 'center', paddingLeft: '8px' }}>
@@ -129,13 +151,22 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         );
     }
     
-    // Lógica para columna 'priority' (selector, siempre editable)
+    // Columna 'priority' (Selector)
     if (columnId === 'priority') {
         return (
             <select
                 value={task.priority}
                 onChange={(e) => updateTaskData(task.id, columnId, e.target.value)}
-                style={{ height: '100%', width: '100%', padding: '0 8px', border: 'none', background: 'white', cursor: 'pointer', fontSize: '14px', ...criticalStyle }}
+                style={{ 
+                    height: '100%', 
+                    width: '100%', 
+                    padding: '0 8px', 
+                    border: 'none', 
+                    background: task.isCritical ? '#FEF2F2' : 'white', 
+                    cursor: 'pointer', 
+                    fontSize: '14px', 
+                    ...criticalStyle 
+                }}
             >
                 {priorityOptions.map(option => (
                     <option key={option} value={option}>{option}</option>
@@ -144,7 +175,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         );
     }
 
-    // Lógica para columna 'name' (jerarquía, colapso, botones)
+    // Columna 'name' (Jerarquía, Colapso, Botones)
     if (columnId === 'name') {
         const isMilestone = task.isMilestone ?? (task.start === task.end && task.progress === 100);
         const isCollapsed = collapsedParents[task.id];
@@ -153,7 +184,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         const nameCellStyle = {
             ...defaultCellStyle,
             paddingLeft: `${depth * 20 + 8}px`, 
-            backgroundColor: isCollapsed ? '#F3F4F6' : (task.isCritical ? '#FEF2F2' : 'transparent'), // Ajuste para el colapso crítico
+            backgroundColor: isCollapsed && !task.isCritical ? '#F3F4F6' : (task.isCritical ? '#FEF2F2' : 'transparent'), 
             cursor: 'default',
             fontWeight: 'normal', 
             color: '#1F2937', 
@@ -161,33 +192,10 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
             ...criticalStyle,
         };
 
-        const toggleIconStyle = {
-            fontSize: '10px',
-            marginRight: '5px',
-            transition: 'transform 0.2s',
-            transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
-            cursor: 'pointer',
-            minWidth: '16px',
-            flexShrink: 0
-        };
-
-        const buttonStyle = {
-            marginLeft: '4px',
-            cursor: 'pointer',
-            fontSize: '14px',
-            color: '#4F46E5',
-            backgroundColor: 'transparent',
-            border: '1px solid #ddd',
-            outline: 'none',
-            padding: '0 4px',
-            borderRadius: '3px',
-            zIndex: 10
-        };
-
         const toggleIcon = isParent ? (
-            <span onClick={() => toggleCollapse(task.id)} style={toggleIconStyle}> &#9658; </span>
+            <span onClick={() => toggleCollapse(task.id)} style={{ paddingRight: '4px', cursor: 'pointer', color: '#4F46E5', transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.1s' }}> &#9658; </span>
         ) : (
-            <span style={{ minWidth: '16px', fontSize: '10px', flexShrink: 0, visibility: 'hidden', marginRight: '5px' }}>&#9658;</span>
+            <span style={{ paddingRight: '12px', color: '#9CA3AF' }}>&#9679;</span> // Placeholder
         );
 
         return (
@@ -195,7 +203,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
                 <div style={{ display: 'flex', alignItems: 'center', flexGrow: 1, overflow: 'hidden' }}>
                     {toggleIcon}
                     <div style={{ flexGrow: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {isMilestone ? '💎 ' : ''}
+                        {isMilestone ? <span style={{ marginRight: '5px' }}>💎</span> : ''}
                         {isEditing ? (
                             <input
                                 ref={inputRef}
@@ -212,26 +220,25 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
                     </div>
                 </div>
 
-                    <div style={{ flexShrink: 0 }}>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                addNewTask(task.id);
-                            }}
-                            style={buttonStyle}
+                    {/* Botones de + y ◊ */}
+                    <div style={{ flexShrink: 0, marginLeft: '10px' }}>
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); addNewTask(task.id); }} 
+                            style={{ 
+                                padding: '1px 5px', fontSize: '12px', background: '#10B981', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', marginRight: '5px' 
+                            }} 
                             title="Agregar Subtarea"
-                        >
-                            +
+                        > 
+                            + 
                         </button>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                addNewMilestone(task.id);
-                            }}
-                            style={buttonStyle}
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); addNewMilestone(task.id); }} 
+                            style={{ 
+                                padding: '1px 5px', fontSize: '12px', background: '#F59E0B', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer' 
+                            }} 
                             title="Agregar Sub-Hito"
-                        >
-                            ◊
+                        > 
+                            ◊ 
                         </button>
                     </div>
 
@@ -239,28 +246,29 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         );
     }
 
-    // Renderizado y formateo de celdas normales
+    // --- Formateo General de Valores ---
     let formattedValue = value;
     if (columnId === 'cost') {
         formattedValue = `$${(parseFloat(value) || 0).toLocaleString('es-ES', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
     } else if (columnId === 'progress') {
         formattedValue = `${parseInt(value, 10) || 0}%`;
-    } else if (columnId === 'dependencies') {
-        const depString = value.split(',').map((id) => id.trim()).filter((id) => id).join(', ');
+    } else if (isDependencyColumn) {
+        // Usa el array simple de IDs (task.dependencies) para la vista
+        const depList = Array.isArray(task.dependencies) ? task.dependencies : [];
+        const depString = depList.join(', ');
         if (depString) {
-            formattedValue = <span style={{ color: '#4F46E5', fontWeight: 'bold' }}>{depString}</span>
+            formattedValue = <span style={{ color: '#4F46E5', fontWeight: 'bold' }}>{depString}</span>;
         } else {
             formattedValue = null;
         }
     } else if (columnId === 'totalSlack') {
         const slackValue = task.totalSlack ?? 'N/A';
-        const floatColor = slackValue === 0 ? '#DC2626' : '#10B981'; 
+        let floatColor = slackValue === 0 ? '#DC2626' : (typeof slackValue === 'number' && slackValue > 0 ? '#10B981' : '#6B7280');
         formattedValue = <span style={{ color: floatColor, fontWeight: 'bold' }}>{slackValue === 'N/A' ? slackValue : `${slackValue} días`}</span>;
     }
     
-    // Lógica para columna 'totalSlack' (Holgura) - ¡NUEVO!
+    // Lógica para columna 'totalSlack' (Holgura) - Siempre solo lectura
     if (columnId === 'totalSlack') {
-        // La celda de Holgura Total debe ser SIEMPRE de solo lectura
         return (
             <div style={{ ...defaultCellStyle, ...calculatedStyle, justifyContent: 'center' }}>
                 {formattedValue}
@@ -268,8 +276,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         );
     }
 
-
-    // Si es un campo calculado (Padre y campo de resumen), aplica el estilo de solo lectura
+    // Campos calculados de solo lectura (Padres y Rollups)
     if (isCalculatedField) {
         return (
             <div style={{ ...defaultCellStyle, ...calculatedStyle }}>
@@ -278,8 +285,7 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
         );
     }
 
-
-    // Si NO es un campo calculado, permite la edición
+    // --- Renderizado de Celdas Editables y la Celda de Dependencias ---
     return (
         <div onDoubleClick={handleDoubleClick} style={defaultCellStyle}>
             {isEditing ? (
@@ -293,7 +299,44 @@ const EditableCell = React.memo(({ initialValue, task, columnId, allTasks, updat
                     type={columnId === 'cost' || columnId === 'progress' ? 'number' : columnId === 'start' || columnId === 'end' ? 'date' : 'text'}
                 />
             ) : (
-                formattedValue || (formattedValue === 0 ? '0' : <span dangerouslySetInnerHTML={{ __html: '&nbsp;' }} />)
+                // LÓGICA MODIFICADA PARA LA COLUMNA 'dependencies'
+                isDependencyColumn ? (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                        {/* 1. Valor de las dependencias */}
+                        <div 
+                            style={{ 
+                                flexGrow: 1, 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis', 
+                                whiteSpace: 'nowrap',
+                                minWidth: '10px' 
+                            }}
+                        >
+                            {formattedValue || <span style={{ color: '#9CA3AF' }}>Añadir Predecesor</span>}
+                        </div>
+                        {/* 2. Botón de Gestión */}
+                        <button
+                          onClick={() => onManageDependencies(task.id)} // ⬅️ ABRE EL MODAL AL HACER CLIC
+                            style={{
+                                marginLeft: '8px',
+                                cursor: 'pointer',
+                                fontSize: '12px',
+                                padding: '2px 6px',
+                                backgroundColor: '#4F46E5', 
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '3px',
+                                flexShrink: 0
+                            }}
+                            title="Gestionar Predecesores (Tipo/Lag)"
+                        >
+                            ⚙️
+                        </button>
+                    </div>
+                ) : (
+                    // Lógica original para todas las demás columnas
+                    formattedValue || (formattedValue === 0 ? '0' : <span dangerouslySetInnerHTML={{ __html: '&nbsp;' }} />)
+                )
             )}
         </div>
     );

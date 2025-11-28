@@ -1,10 +1,11 @@
 import React, { useMemo, useCallback } from 'react';
-// Tipos y Constantes inyectados para asegurar que el archivo sea autocontenido
 
 // --- CONSTANTES ---
 const BAR_HEIGHT = 16;
 const BAR_PADDING = 4;
 const ROW_HEIGHT_PX = 30;
+const HEADER_HEIGHT = 45; // Altura de la cabecera de tiempo
+
 enum ViewMode {
     Day = 'Day',
     Week = 'Week',
@@ -34,37 +35,47 @@ interface CustomGanttProps {
     scrollRef: React.RefObject<HTMLDivElement>;
     onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
 }
+// ----------------------------------------------------------------
 
 const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, onScroll }) => {
+    
+    // Simplificación de constantes internas
     const barHeight = BAR_HEIGHT;
     const barPadding = BAR_PADDING;
     const rowHeight = ROW_HEIGHT_PX;
-    const headerHeight = 45; // Altura de la cabecera de tiempo
+    const headerHeight = HEADER_HEIGHT; 
     const today = new Date();
 
+    // Mapeo de tareas para búsqueda eficiente
     const taskMap = useMemo(() => new Map<string, TaskWithCPM>(tasks.map((t) => [t.id, t])), [tasks]);
     
-    // --- Cálculo de Fechas y Escala ---
-    const { start: projectStart, end: projectEnd } = useMemo(() => {
+    // --- Cálculo de Fechas de Proyecto y Escala ---
+    const { projectStart, projectEnd } = useMemo(() => {
         const dates = tasks.flatMap(t => [new Date(t.start), new Date(t.end)]).filter(d => !isNaN(d.getTime()));
-        // Añadir una ventana de tiempo si no hay tareas para evitar errores
+        
+        // Valores predeterminados si no hay tareas
         const defaultStart = new Date();
         const defaultEnd = new Date(defaultStart);
-        defaultEnd.setDate(defaultEnd.getDate() + 30); // 30 días si está vacío
+        defaultEnd.setDate(defaultEnd.getDate() + 30); 
         
-        const start = dates.length ? new Date(Math.min(...dates.map(d => new Date(d).setHours(0, 0, 0, 0)))) : defaultStart;
-        const end = dates.length ? new Date(Math.max(...dates.map(d => new Date(d).setHours(23, 59, 59, 999)))) : defaultEnd;
+        // Calcular inicio y fin del proyecto (Asegurando la medianoche para el inicio y el final del día)
+        const startTimestamp = dates.length ? Math.min(...dates.map(d => new Date(d).setHours(0, 0, 0, 0))) : defaultStart.getTime();
+        const endTimestamp = dates.length ? Math.max(...dates.map(d => new Date(d).setHours(23, 59, 59, 999))) : defaultEnd.getTime();
         
-        // Ajustar el inicio para incluir un margen si es necesario
+        const start = new Date(startTimestamp);
+        const end = new Date(endTimestamp);
+        
+        // Ajustar el inicio para incluir un margen (2 días)
         start.setDate(start.getDate() - 2); 
-        return { start, end };
+
+        return { projectStart: start, projectEnd: end };
     }, [tasks]);
 
     const scaleFactor = useMemo(() => {
-        // Ajustar el factor de escala para la visualización por día
+        // Ajustar el factor de escala (pixels por día) según el modo de vista
         switch (viewMode) {
-            case ViewMode.Day: return 35; 
-            case ViewMode.Week: return 10; 
+            case ViewMode.Day: return 35; // 35px por día
+            case ViewMode.Week: return 10; // 10px por día (Zoom out)
             case ViewMode.Month: return 5; 
             case ViewMode.Year: return 1; 
             default: return 5;
@@ -72,21 +83,23 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
     }, [viewMode]);
 
     const daysInProject = Math.ceil((projectEnd.getTime() - projectStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-    const svgWidth = daysInProject * scaleFactor + 50;
+    const svgWidth = daysInProject * scaleFactor + 50; // +50 para margen derecho
 
+    // Función para obtener la posición X de una fecha
     const getXPosition = useCallback((dateString: string): number => {
         const date = new Date(dateString);
         if (isNaN(date.getTime())) return 0;
-        // La diferencia en días (redondeado para asegurar que los fines de tarea se mapeen correctamente)
-        const diffTime = date.getTime() - projectStart.getTime();
+        
+        const diffTime = new Date(date.setHours(0, 0, 0, 0)).getTime() - new Date(projectStart.setHours(0, 0, 0, 0)).getTime();
         const daysDifference = Math.floor(diffTime / (1000 * 60 * 60 * 24));
         return daysDifference * scaleFactor;
     }, [projectStart, scaleFactor]);
 
-    // --- Time Axis (Genera un objeto por cada día para la cuadrícula) ---
+    // --- Time Axis (Datos para la Cuadrícula y la Cabecera) ---
     const timeAxis = useMemo(() => { 
         const axis = [];
-        let current = new Date(projectStart);
+        // Clonar la fecha de inicio para no mutar el original
+        let current = new Date(projectStart); 
 
         while (current <= projectEnd) {
             axis.push({ 
@@ -98,14 +111,18 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
     }, [projectStart, projectEnd]);
 
 
-    // --- Barras de Tareas ---
-    const taskBars = tasks.map((task, index) => {
+    // --- Barras de Tareas (SVG) ---
+    const taskBars = useMemo(() => tasks.map((task, index) => {
+        // Validación básica
         if (!task.start || !task.end || isNaN(new Date(task.start).getTime()) || isNaN(new Date(task.end).getTime())) { return null; }
 
         const xStart = getXPosition(task.start);
-        const xEnd = getXPosition(task.end) + scaleFactor;
-        const width = Math.max(0, xEnd - xStart); // Asegura que el ancho no sea negativo
+        // El final debe incluir la duración del último día
+        const xEnd = getXPosition(task.end) + scaleFactor; 
+        const width = Math.max(scaleFactor, xEnd - xStart); // Asegura un ancho mínimo de 1 día
         const y = headerHeight + index * rowHeight + barPadding;
+        
+        // Hito si la duración es cero o si es el mismo día
         const isMilestone = task.start === task.end || task.duration === 0;
         
         const criticalColor = '#DC2626'; // Rojo - Crítico
@@ -113,17 +130,18 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
         const bgColor = task.isCritical ? criticalColor : nonCriticalColor;
         const progressWidth = width * (task.progress / 100);
         
-        // Renderizado de Hitos y Barras
+        // Renderizado de Hitos (Diamante)
         if (isMilestone) {
              return (
                 <g key={task.id} style={{ cursor: 'pointer' }}>
                     {/* Hito: Diamante rotado */}
-                    <rect x={xStart} y={y - 8} width={16} height={16} fill={bgColor} transform={`rotate(45 ${xStart + 8} ${y})`} rx="2" />
+                    <rect x={xStart - 8} y={y - 8} width={barHeight} height={barHeight} fill={bgColor} transform={`rotate(45 ${xStart} ${y})`} rx="2" />
                     <title>{`${task.name} (Hito) - ${task.start} - ${task.isCritical ? 'CRÍTICO' : 'No Crítico'}`}</title>
                 </g>
             );
         }
         
+        // Renderizado de Barras
         return (
             <g key={task.id} style={{ cursor: 'pointer' }}>
                 {/* Barra de fondo */}
@@ -139,9 +157,9 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
                 <title>{`${task.name} (${task.progress}%) - ${task.start} a ${task.end} - ${task.isCritical ? 'CRÍTICO' : 'No Crítico'}`}</title>
             </g>
         );
-    }).filter(Boolean);
+    }).filter(Boolean), [tasks, getXPosition, scaleFactor, headerHeight, rowHeight, barPadding]);
 
-    // --- Líneas de Dependencia (Implementación del enrutamiento) ---
+    // --- Líneas de Dependencia (Enrutamiento 'Codo' o L-Shape) ---
     const dependencyLines = useMemo(() => {
         const lines: JSX.Element[] = [];
 
@@ -166,14 +184,15 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
                     const xEnd = getXPosition(sourceTask.start);
                     const yEnd = headerHeight + sourceIndex * rowHeight + rowHeight / 2;
 
-                    // Determinamos si la dependencia es crítica (asumiendo totalSlack en TaskWithCPM)
+                    // Lógica para determinar si la dependencia es crítica
+                    // Asumimos que es crítica si ambas tareas son críticas Y la holgura de la tarea fuente es 0
                     const isCriticalDep = sourceTask.isCritical && targetTask.isCritical && sourceTask.totalSlack === 0;
                     const strokeColor = isCriticalDep ? '#991b1b' : '#6B7280';
                     const marker = isCriticalDep ? 'url(#arrowhead-critical)' : 'url(#arrowhead-normal)';
 
-                    // Enrutamiento: Derecha -> Abajo/Arriba -> Izquierda
-                    // MidX se mueve 10px a la derecha del final de la tarea objetivo
+                    // Enrutamiento: Derecha (10px buffer) -> Abajo/Arriba -> Izquierda
                     const midX = xStart + 10;
+                    // M xStart yStart: Mover al inicio. L midX yStart: Derecha. L midX yEnd: Abajo/Arriba. L xEnd yEnd: Izquierda hasta la tarea.
                     const path = `M ${xStart} ${yStart} L ${midX} ${yStart} L ${midX} ${yEnd} L ${xEnd} ${yEnd}`;
 
                     lines.push(
@@ -195,6 +214,7 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
 
     const svgHeight = headerHeight + tasks.length * rowHeight;
 
+    // --- Renderizado Principal ---
     return (
         <div 
             ref={scrollRef} 
@@ -203,13 +223,16 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
                 width: '100%', 
                 height: '100%', 
                 overflow: 'auto', 
-                backgroundColor: 'white' 
+                backgroundColor: 'white',
+                minWidth: '500px' // Mínimo para que el scroll funcione
             }}
         >
             <svg width={svgWidth} height={svgHeight}>
-                {/* Definiciones de Flechas */}
+                {/* Definiciones de Flechas (Arrowheads) */}
                 <defs>
+                    {/* Flecha Normal */}
                     <marker id="arrowhead-normal" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="10 3.5, 0 0, 0 7" fill="#6B7280" /></marker>
+                    {/* Flecha Crítica */}
                     <marker id="arrowhead-critical" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="10 3.5, 0 0, 0 7" fill="#991b1b" /></marker>
                 </defs>
 
@@ -222,13 +245,21 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
                         const isStartOfWeek = date.getDay() === 0; // Domingo
                         const isStartOfMonth = date.getDate() === 1;
 
-                        // Color y grosor de línea según el modo de vista y la fecha
+                        // Color de línea de cuadrícula
                         const strokeColor = isStartOfMonth ? '#D1D5DB' : '#F3F4F6';
                         
-                        // Determinar si dibujar la etiqueta del día
-                        const shouldDrawDayLabel = viewMode === ViewMode.Day && index % 1 === 0;
-                        // Determinar si dibujar la etiqueta del mes/semana
-                        const shouldDrawHeaderLabel = (viewMode === ViewMode.Week && isStartOfWeek) || isStartOfMonth;
+                        // Lógica de Etiquetas de Cabecera (Simplificada para mejor UX en diferentes vistas)
+                        let dayLabel, headerLabel;
+
+                        if (viewMode === ViewMode.Day) {
+                            dayLabel = date.getDate(); // Muestra el número del día
+                        } else if (viewMode === ViewMode.Week && isStartOfWeek) {
+                            headerLabel = date.toLocaleString('es-ES', { day: 'numeric', month: 'short' }); // Inicio de semana
+                        } else if (viewMode === ViewMode.Month && isStartOfMonth) {
+                            headerLabel = date.toLocaleString('es-ES', { month: 'long', year: 'numeric' }); // Inicio de mes
+                        } else if (viewMode === ViewMode.Year && isStartOfMonth) {
+                            headerLabel = date.toLocaleString('es-ES', { month: 'short', year: 'numeric' }); // Inicio de mes
+                        }
 
                         return (
                             <React.Fragment key={`col-${index}`}>
@@ -242,33 +273,33 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
                                     strokeWidth="1"
                                 />
 
-                                {/* Etiqueta del Día (Modo Día) */}
-                                {shouldDrawDayLabel && (
+                                {/* Etiqueta del Día (Parte Inferior de la cabecera) */}
+                                {dayLabel && (
                                     <text 
                                         x={x + scaleFactor / 2} 
                                         y={35} 
                                         textAnchor="middle" 
                                         style={{ fontSize: '9px', fill: '#4B5563' }}
                                     >
-                                        {date.getDate()}
+                                        {dayLabel}
                                     </text>
                                 )}
                                 
-                                {/* Etiqueta del Mes/Semana (Modos Semana/Mes/Año) */}
-                                {shouldDrawHeaderLabel && (
+                                {/* Etiqueta del Mes/Semana (Parte Superior de la cabecera) */}
+                                {headerLabel && (
                                     <text 
                                         x={x + 5} 
                                         y={18} 
                                         style={{ fontSize: '12px', fill: '#4B5563', fontWeight: 'bold' }}
                                     >
-                                        {date.toLocaleString('es-ES', { month: 'short', year: 'numeric' })}
+                                        {headerLabel}
                                     </text>
                                 )}
                             </React.Fragment>
                         );
                     })}
 
-                    {/* Línea de Hoy */}
+                    {/* Línea de Hoy (Roja y destacada) */}
                     <line 
                         x1={getXPosition(today.toISOString().split('T')[0])} 
                         y1={0} 
@@ -278,7 +309,7 @@ const CustomGantt: React.FC<CustomGanttProps> = ({ tasks, viewMode, scrollRef, o
                         strokeWidth="2" 
                     />
                     
-                    {/* Separador de cabecera */}
+                    {/* Separador de cabecera horizontal */}
                     <line x1="0" y1={headerHeight} x2={svgWidth} y2={headerHeight} stroke="#D1D5DB" strokeWidth="1" />
                 </g>
 

@@ -5,23 +5,83 @@ const BAR_HEIGHT = 34;
 const BAR_PADDING = 8;
 const ROW_HEIGHT_PX = BAR_HEIGHT + BAR_PADDING * 2;
 const ViewMode = { Day: 'Day', Week: 'Week', Month: 'Month', Year: 'Year' };
-
+const DependencyType = {
+    FS: 'FS', // Finish to Start (Fin-a-Inicio) - Tarea B empieza cuando A termina. (Por defecto)
+    SS: 'SS', // Start to Start (Inicio-a-Inicio) - Tarea B empieza cuando A empieza.
+    FF: 'FF', // Finish to Finish (Fin-a-Fin) - Tarea B termina cuando A termina.
+    SF: 'SF', // Start to Finish (Inicio-a-Fin) - Tarea B termina cuando A empieza.
+};
 // --- TAREAS INICIALES ---
 const initialTasks = [
     { id: 'T1', name: 'Fase de Planificación', start: '2025-11-01', end: '2025-11-15', progress: 100, parentId: null, cost: 5000, priority: 'Alta', dependencies: '' },
     { id: 'S1-1', name: 'Definir Alcance', start: '2025-11-01', end: '2025-11-07', progress: 100, parentId: 'T1', cost: 2000, priority: 'Media', dependencies: 'T1' },
-    { id: 'S1-2', name: 'Requisitos de Stakeholders', start: '2025-11-08', end: '2025-11-15', progress: 90, parentId: 'T1', cost: 3000, priority: 'Alta', dependencies: 'S1-1' },
-    { id: 'M1', name: 'Hito: Aprobación de Alcance', start: '2025-11-15', end: '2025-11-15', progress: 100, parentId: 'T1', cost: 0, priority: 'Alta', dependencies: 'S1-2' }, // Depende de S1-2
-    { id: 'T2', name: 'Desarrollo Core', start: '2025-11-16', end: '2025-12-10', progress: 70, parentId: null, cost: 15000, priority: 'Alta', dependencies: 'M1' }, // Depende de M1
+    { id: 'S1-2', name: 'Requisitos de Stakeholders', start: '2025-11-08', end: '2025-11-15', progress: 90, parentId: 'T1', cost: 3000, priority: 'Alta', dependencies: '[{"id":"S1-1", "type":"FS", "lag":0}]' }, // Ejemplo de estructura JSON
+    { id: 'M1', name: 'Hito: Aprobación de Alcance', start: '2025-11-15', end: '2025-11-15', progress: 100, parentId: 'T1', cost: 0, priority: 'Alta', dependencies: 'S1-2' }, 
+    { id: 'T2', name: 'Desarrollo Core', start: '2025-11-16', end: '2025-12-10', progress: 70, parentId: null, cost: 15000, priority: 'Alta', dependencies: 'M1' },
     { id: 'S2-1', name: 'Codificación Módulo A', start: '2025-11-16', end: '2025-11-30', progress: 80, parentId: 'T2', cost: 5000, priority: 'Alta', dependencies: 'T2' },
-    { id: 'S2-2', name: 'Integración de API', start: '2025-12-01', end: '2025-12-10', progress: 50, parentId: 'T2', cost: 10000, priority: 'Media', dependencies: 'S2-1' }, // Depende de S2-1 (Cambié la fecha de inicio a 01/12 para que sea crítica)
-    { id: 'T3', name: 'Pruebas e Implementación', start: '2025-12-11', end: '2025-12-30', progress: 30, parentId: null, cost: 8000, priority: 'Baja', dependencies: 'S2-2' }, // Depende de T2
+    { id: 'S2-2', name: 'Integración de API', start: '2025-12-01', end: '2025-12-10', progress: 50, parentId: 'T2', cost: 10000, priority: 'Media', dependencies: '[{"id":"S2-1", "type":"FS", "lag":5}]' }, // Ejemplo FS con +5 días de retraso
+    { id: 'T3', name: 'Pruebas e Implementación', start: '2025-12-11', end: '2025-12-30', progress: 30, parentId: null, cost: 8000, priority: 'Baja', dependencies: 'S2-2' },
     { id: 'S3-1', name: 'Beta Testing', start: '2025-12-11', end: '2025-12-20', progress: 50, parentId: 'T3', cost: 3000, priority: 'Media', dependencies: 'T3' },
-    { id: 'S3-2', name: 'Despliegue Final', start: '2025-12-21', end: '2025-12-30', progress: 10, parentId: 'T3', cost: 5000, priority: 'Alta', dependencies: 'S3-1' }, // Depende de S3-1
+    { id: 'S3-2', name: 'Despliegue Final', start: '2025-12-21', end: '2025-12-30', progress: 10, parentId: 'T3', cost: 5000, priority: 'Alta', dependencies: 'S3-1' },
 ];
 
 // --- FUNCIONES DE UTILIDAD DE FECHA PARA CPM y ROLLUP ---
 
+const parseDependencies = (dependenciesStr) => {
+    if (!dependenciesStr) return [];
+    
+    // Si parece JSON (empieza con [), intenta parsear
+    if (dependenciesStr.trim().startsWith('[')) {
+        try {
+            const parsed = JSON.parse(dependenciesStr);
+            if (Array.isArray(parsed)) return parsed;
+        } catch (e) {
+            console.error("Error parsing JSON dependencies:", dependenciesStr, e);
+        }
+    }
+
+    // Si es solo una cadena de IDs (como 'T1, T2'), asume FS:0
+    return dependenciesStr.split(',')
+        .map(id => id.trim())
+        .filter(Boolean)
+        .map(id => ({ id, type: DependencyType.FS, lag: 0 }));
+};
+
+const calculatePredecessorConstraint = (predecessorTask, type, lagDays) => {
+    const lag = lagDays || 0;
+    
+    // Retorna la fecha de la predecesora más los días de desfase/retraso (lag)
+    switch (type) {
+        case DependencyType.FS: // Finish-to-Start: B empieza el día después del Fin de A + lag.
+            if (!predecessorTask.EF) return null;
+            return addDays(predecessorTask.EF, 1 + lag);
+        case DependencyType.SS: // Start-to-Start: B empieza el mismo día que A empieza + lag.
+            if (!predecessorTask.ES) return null;
+            return addDays(predecessorTask.ES, lag);
+        case DependencyType.FF: // Finish-to-Finish: B termina el mismo día que A termina + lag. (Útil para Pase Atrás)
+        case DependencyType.SF: // Start-to-Finish: B termina el día que A empieza + lag. (No se usa en pase adelante ES/EF)
+        default:
+            return null;
+    }
+};
+
+const calculateSuccessorConstraint = (successorTask, type, lagDays) => {
+    const lag = lagDays || 0;
+    
+    // Retorna la fecha de la sucesora menos los días de desfase/retraso (lag)
+    switch (type) {
+        case DependencyType.FS: // Finish-to-Start: A debe terminar el día antes que B empiece - lag.
+            if (!successorTask.LS) return null;
+            return addDays(successorTask.LS, -1 - lag);
+        case DependencyType.FF: // Finish-to-Finish: A debe terminar el mismo día que B termina - lag.
+            if (!successorTask.LF) return null;
+            return addDays(successorTask.LF, -lag);
+        case DependencyType.SS: // Start-to-Start: A debe empezar el mismo día que B empieza - lag. (Útil para Pase Atrás)
+        case DependencyType.SF: // Start-to-Finish: A debe empezar el día antes que B termine - lag. (Útil para Pase Atrás)
+        default:
+            return null;
+    }
+};
 // Calcula la duración en días calendario (incluye ambos días)
 const getDurationInDays = (startStr, endStr) => {
     const start = new Date(startStr);
@@ -58,30 +118,34 @@ const maxDate = (dateStrA, dateStrB) => {
 
 const useCriticalPathData = (tasks) => {
     return useMemo(() => {
+        // ... (resto de la inicialización) ...
         if (!tasks.length) return { criticalTasks: [], fullTaskData: [] };
 
         const taskData = new Map();
         tasks.forEach(task => {
             const duration = getDurationInDays(task.start, task.end);
+            // Parsear las dependencias inmediatamente al cargar
+            const parsedDeps = parseDependencies(task.dependencies); 
             taskData.set(task.id, {
                 ...task,
+                parsedDependencies: parsedDeps, // Almacenar las dependencias parseadas
                 duration: duration,
-                ES: null, // Early Start
-                EF: null, // Early Finish
-                LS: null, // Late Start
-                LF: null, // Late Finish
-                Float: null, // Holgura
-                successors: [], // Se llenará en el paso de mapeo
+                ES: null, 
+                EF: null, 
+                LS: null, 
+                LF: null, 
+                Float: null, 
+                successors: [], 
             });
         });
 
-        // 1. Mapeo de Sucesores
-        tasks.forEach(task => {
-            const dependencies = task.dependencies ? task.dependencies.split(',').map(id => id.trim()).filter(Boolean) : [];
-            dependencies.forEach(depId => {
-                const predecessor = taskData.get(depId);
+        // 1. Mapeo de Sucesores (Ahora basado en las dependencias parseadas)
+        taskData.forEach(task => {
+             task.parsedDependencies.forEach(dep => {
+                const predecessor = taskData.get(dep.id);
                 if (predecessor) {
-                    predecessor.successors.push(task.id);
+                    // Almacenar el tipo de dependencia y lag en el sucesor
+                    predecessor.successors.push({ id: task.id, type: dep.type, lag: dep.lag });
                 }
             });
         });
@@ -95,30 +159,29 @@ const useCriticalPathData = (tasks) => {
             changed = false;
             iterationCount++;
 
-            tasks.forEach(task => {
-                const currentData = taskData.get(task.id);
+            taskData.forEach(currentData => {
                 let newES = currentData.start; 
+                let maxEF = null;
 
-                const dependencies = task.dependencies ? task.dependencies.split(',').map(id => id.trim()).filter(Boolean) : [];
-
-                if (dependencies.length > 0) {
-                    let maxEF = null;
-
-                    dependencies.forEach(depId => {
-                        const predecessor = taskData.get(depId);
-                        if (predecessor && predecessor.EF) {
-                            // Finish-to-Start: ES de la tarea actual es el día después del EF de la predecesora.
-                            const potentialES = addDays(predecessor.EF, 1);
+                // 2.1. Considerar las restricciones de las predecesoras
+                currentData.parsedDependencies.forEach(dep => {
+                    const predecessor = taskData.get(dep.id);
+                    if (predecessor && predecessor.ES && predecessor.EF) {
+                        
+                        // ⭐️ Cálculo avanzado basado en el tipo de dependencia y lag (para ES)
+                        const potentialES = calculatePredecessorConstraint(predecessor, dep.type, dep.lag);
+                        
+                        if (potentialES) {
                             if (!maxEF || potentialES > maxEF) {
                                 maxEF = potentialES;
                             }
                         }
-                    });
-
-                    // El ES de la tarea es el máximo entre su fecha de inicio y el maxEF de sus predecesoras.
-                    if (maxEF && maxEF > newES) {
-                         newES = maxEF;
                     }
+                });
+
+                // 2.2. Aplicar la restricción máxima
+                if (maxEF && maxEF > newES) {
+                     newES = maxEF;
                 }
 
                 // Calcular el nuevo EF
@@ -137,7 +200,7 @@ const useCriticalPathData = (tasks) => {
             }
         } while (changed);
 
-        // 3. Obtener la Fecha de Finalización del Proyecto (Project Finish Date)
+        // ... (3. Obtener Project Finish Date - Mismo) ...
         let projectFinishDate = new Date(0);
         taskData.forEach(task => {
             if (task.EF) {
@@ -147,7 +210,6 @@ const useCriticalPathData = (tasks) => {
                 }
             }
         });
-
         const projectFinishDateStr = projectFinishDate.toISOString().split('T')[0];
 
         // 4. Pase Atrás (Backward Pass) para LF y LS
@@ -166,29 +228,51 @@ const useCriticalPathData = (tasks) => {
             changedBackward = false;
             iterationCount++;
             
+            // Iteramos sobre las tareas en orden inverso
             for (let i = tasks.length - 1; i >= 0; i--) {
                 const task = tasks[i];
                 const currentData = taskData.get(task.id);
 
                 if (currentData.successors.length > 0) {
-                    let minLS = null;
+                    let minLF = null;
 
-                    currentData.successors.forEach(succId => {
-                        const successor = taskData.get(succId);
-                        if (successor && successor.LS) {
-                            // El LF de la tarea actual es el día antes del LS de la sucesora.
-                            const potentialLF = addDays(successor.LS, -1);
-                            if (!minLS || potentialLF < minLS) {
-                                minLS = potentialLF;
+                    currentData.successors.forEach(succ => {
+                        const successor = taskData.get(succ.id);
+                        if (successor && successor.LS && successor.LF) {
+                            
+                            // ⭐️ Cálculo avanzado basado en el tipo de dependencia y lag (para LF)
+                            let potentialLF = null;
+                            
+                            switch (succ.type) {
+                                case DependencyType.FS: // Finish-to-Start: LF es el día antes del LS de la sucesora - lag.
+                                    potentialLF = addDays(successor.LS, -1 - succ.lag);
+                                    break;
+                                case DependencyType.FF: // Finish-to-Finish: LF es el LF de la sucesora - lag.
+                                    potentialLF = addDays(successor.LF, -succ.lag);
+                                    break;
+                                case DependencyType.SS: // Start-to-Start: Se requiere un cálculo inverso del LS. LF = (LS_Suc - lag) + duracion_act - 1
+                                    const LS_pred = addDays(successor.LS, -succ.lag);
+                                    potentialLF = addDays(LS_pred, currentData.duration - 1);
+                                    break;
+                                case DependencyType.SF: // Start-to-Finish: Se requiere un cálculo inverso del LF. LF = LF_Suc - lag
+                                    potentialLF = addDays(successor.LF, -succ.lag);
+                                    break;
+                                default:
+                                    break;
+                            }
+                            
+                            if (potentialLF) {
+                                if (!minLF || potentialLF < minLF) {
+                                    minLF = potentialLF;
+                                }
                             }
                         }
                     });
 
-                    // Si minLS está definido, actualizar el LF y LS
-                    if (minLS) {
-                        // Solo actualizar si el nuevo LF es más temprano que el actual, o si el actual es nulo
-                        if (!currentData.LF || minLS < currentData.LF) {
-                            currentData.LF = minLS;
+                    // Si minLF está definido, actualizar el LF y LS
+                    if (minLF) {
+                        if (!currentData.LF || minLF < currentData.LF) {
+                            currentData.LF = minLF;
                             currentData.LS = addDays(currentData.LF, -(currentData.duration - 1));
                             changedBackward = true;
                         }
@@ -202,17 +286,16 @@ const useCriticalPathData = (tasks) => {
             }
         } while (changedBackward);
 
-        // 5. Calcular Holgura (Float) e identificar la Ruta Crítica
+        // ... (5. Calcular Holgura - Mismo) ...
         const criticalTasks = [];
         const finalTaskData = [];
-
         taskData.forEach(task => {
             // Calcular Holgura: Float = Días entre LF y EF
             let Float = 0;
             if (task.LF && task.EF) {
                 const lfDate = new Date(task.LF);
                 const efDate = new Date(task.EF);
-                Float = Math.round((lfDate.getTime() - efDate.getTime()) / (1000 * 60 * 60 * 24)); // Redondear para evitar errores de coma flotante
+                Float = Math.round((lfDate.getTime() - efDate.getTime()) / (1000 * 60 * 60 * 24)); 
             }
             task.Float = Float;
             task.isCritical = task.Float === 0;
@@ -223,7 +306,6 @@ const useCriticalPathData = (tasks) => {
             finalTaskData.push(task);
         });
 
-        // Retornamos las tareas enriquecidas con datos CPM
         return { criticalTasks, fullTaskData: finalTaskData };
 
     }, [tasks]);
@@ -246,6 +328,131 @@ const isTaskHidden = (task, collapsedParents, allTasks) => {
         if (!currentTask) break;
     }
     return false;
+};
+
+// --- COMPONENTE MODAL DE DEPENDENCIA ---
+const DependencyModal = ({ task, allTasks, updateTaskData, onClose }) => {
+    // Tareas que no son la actual y que tienen ID
+    const otherTasks = allTasks.filter(t => t.id !== task.id && t.id); 
+    const initialDeps = task.parsedDependencies || parseDependencies(task.dependencies);
+    const [dependencies, setDependencies] = useState(initialDeps);
+    
+    // Lista de todas las posibles predecesoras para el selector
+    const predecessorOptions = [{ id: '', name: 'Seleccionar Tarea...' }, ...otherTasks];
+    
+    const handleAddDependency = () => {
+        setDependencies(prev => [...prev, { id: '', type: DependencyType.FS, lag: 0 }]);
+    };
+    
+    const handleUpdateDependency = (index, key, value) => {
+        setDependencies(prev => prev.map((dep, i) => 
+            i === index ? { ...dep, [key]: key === 'lag' ? parseInt(value) || 0 : value } : dep
+        ));
+    };
+
+    const handleRemoveDependency = (index) => {
+        setDependencies(prev => prev.filter((_, i) => i !== index));
+    };
+
+    const handleSave = () => {
+        // Formatear las dependencias válidas a JSON string para guardarlas en el estado de tareas
+        const validDeps = dependencies.filter(dep => dep.id);
+        const jsonString = validDeps.length > 0 ? JSON.stringify(validDeps) : '';
+        
+        updateTaskData(task.id, 'dependencies', jsonString);
+        onClose();
+    };
+
+    const modalStyle = {
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 1000,
+        display: 'flex', justifyContent: 'center', alignItems: 'center',
+    };
+    
+    const contentStyle = {
+        backgroundColor: 'white', padding: '20px', borderRadius: '8px',
+        width: '500px', maxHeight: '80vh', overflowY: 'auto',
+        boxShadow: '0 10px 25px rgba(0, 0, 0, 0.3)',
+    };
+    
+    const inputStyle = { padding: '5px', border: '1px solid #ccc', borderRadius: '4px', width: '100%', boxSizing: 'border-box' };
+    const selectStyle = { ...inputStyle, width: 'auto' };
+
+    return (
+        <div style={modalStyle}>
+            <div style={contentStyle}>
+                <h3 style={{ color: '#4f46e5', borderBottom: '1px solid #ddd', paddingBottom: '10px', marginBottom: '15px' }}>
+                    Editar Dependencias de **{task.name}**
+                </h3>
+
+                {dependencies.map((dep, index) => (
+                    <div key={index} style={{ display: 'flex', gap: '10px', marginBottom: '15px', alignItems: 'center', border: '1px solid #eee', padding: '10px', borderRadius: '4px' }}>
+                        
+                        {/* Selector de Predecesor */}
+                        <select
+                            value={dep.id}
+                            onChange={(e) => handleUpdateDependency(index, 'id', e.target.value)}
+                            style={{ ...selectStyle, flexGrow: 2 }}
+                        >
+                            {predecessorOptions.map(opt => (
+                                <option key={opt.id} value={opt.id}>{opt.id ? `${opt.id} - ${opt.name}` : opt.name}</option>
+                            ))}
+                        </select>
+                        
+                        {/* Selector de Tipo */}
+                        <select
+                            value={dep.type}
+                            onChange={(e) => handleUpdateDependency(index, 'type', e.target.value)}
+                            style={selectStyle}
+                        >
+                            {Object.values(DependencyType).map(type => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
+                        
+                        {/* Desfase (Lag) */}
+                        <input
+                            type="number"
+                            value={dep.lag}
+                            onChange={(e) => handleUpdateDependency(index, 'lag', e.target.value)}
+                            placeholder="Lag (días)"
+                            style={{ ...inputStyle, width: '80px' }}
+                        />
+                        
+                        {/* Botón de Eliminar */}
+                        <button 
+                            onClick={() => handleRemoveDependency(index)}
+                            style={{ padding: '5px 10px', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                        >
+                            X
+                        </button>
+                    </div>
+                ))}
+
+                <button 
+                    onClick={handleAddDependency}
+                    style={{ padding: '8px 15px', backgroundColor: '#10b981', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', marginBottom: '15px' }}
+                >
+                    + Agregar Dependencia
+                </button>
+                
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                    <button 
+                        onClick={onClose}
+                        style={{ padding: '8px 15px', backgroundColor: '#6b7280', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                        Cancelar
+                    </button>
+                    <button 
+                        onClick={handleSave}
+                        style={{ padding: '8px 15px', backgroundColor: '#4f46e5', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                        Guardar Cambios
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // --- COMPONENTE DE CELDA EDITABLE ---

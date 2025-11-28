@@ -223,69 +223,7 @@ const App: FC = () => {
 
     return (
         <TableGantt></TableGantt>
-        // <div style={styles.mainContainer}>
-        //     <div style={styles.inlineBlockContainer}>
-                
-        //         <h1 style={styles.title}>
-        //             Tabla Redimensionable (Estilos Puros)
-        //         </h1>
-                
-        //         <div style={styles.tableWrapper}>
-        //             <div style={{ overflowX: 'auto' }}>
-        //                 <table 
-        //                     style={styles.table}
-        //                 >
-        //                     {/* ----------------- ENCABEZADOS (HEADERS) ----------------- */}
-        //                     <thead>
-        //                         <tr>
-        //                             {initialColumns.map((col) => (
-        //                                 <th
-        //                                     key={col.id}
-        //                                     // Aplica el ancho controlado por el estado + estilos base del encabezado
-        //                                     style={{ ...styles.headerCell, width: columnWidths[col.id] }}
-        //                                 >
-        //                                     {col.header}
 
-        //                                     {/* MANEJADOR DE REDIMENSIONAMIENTO */}
-        //                                     <div
-        //                                         onMouseDown={(e) => startResize(col.id, e)}
-        //                                         onTouchStart={(e) => startResize(col.id, e)}
-                                                
-        //                                         // Aplica el estilo del redimensionador, cambiando el color si está activo
-        //                                         style={styles.resizer(resizingInfo.current.currentColumnId === col.id)}
-        //                                     />
-        //                                 </th>
-        //                             ))}
-        //                         </tr>
-        //                     </thead>
-
-        //                     {/* ----------------- CUERPO DE LA TABLA (BODY) ----------------- */}
-        //                     <tbody>
-        //                         {data.map((row, rowIndex) => (
-        //                             <tr key={rowIndex} style={styles.tableRow}>
-        //                                 {initialColumns.map((col) => (
-        //                                     <td 
-        //                                         key={col.id} 
-        //                                         // Aplica el ancho controlado por el estado + estilos base de la celda
-        //                                         style={{ ...styles.dataCell, width: columnWidths[col.id] }}
-        //                                     >
-        //                                         {/* Accede al valor de la fila */}
-        //                                         {String(row[col.id])}
-        //                                     </td>
-        //                                 ))}
-        //                             </tr>
-        //                         ))}
-        //                     </tbody>
-        //                 </table>
-        //             </div>
-        //         </div>
-                
-        //         <div style={styles.infoText}>
-        //             <p>Arrastra las líneas divisorias entre los encabezados para redimensionar las columnas.</p>
-        //             <p>Ancho total de la tabla: <span style={{ fontWeight: 600, color: '#4f46e5' }}>{Math.round(totalTableWidth)}px</span></p>
-        //         </div>
-        //     </div>
-        // </div>
     );
 };
 

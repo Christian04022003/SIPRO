@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 
+
 // === Definiciones de tipos y constantes asumidas ===
 /** @typedef {'Day' | 'Week' | 'Month'} ViewModeType */
 /** @typedef {'Alta' | 'Media' | 'Baja'} PriorityType */
@@ -9,17 +10,17 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 
 
 // === IMPORTACIONES (Asegúrate de que estas rutas sean correctas) ===
-// NOTA: 'initialTasks' y 'ViewMode' deben estar definidas en './constants'
-// NOTA: 'EditableCell' y 'CustomGantt' deben estar definidas en './components'
 import { initialTasks, ViewMode, defaultColumnsDef, availableColumnTypes } from './constants'; 
 import EditableCell from './components/EditableCell';
 import CustomGantt from './components/CustomGantt';
+import DependencyManagerModal, {parseDependencies, formatDependencies}  from './components/DependencyManageModal';
 
 
 // === CONSTANTES DE LAYOUT ===
 const ROW_HEIGHT_PX = 30;
 const MIN_COLLAPSED_WIDTH = 5; 
 const DEFAULT_RESTORE_WIDTH = 150; 
+
 
 const getParentChain = (taskId, allTasks, chain = new Set()) => {
     const task = allTasks.find(t => t.id === taskId);
@@ -41,11 +42,8 @@ const generateUniqueId = (tasks) => {
 };
 
 const addDays = (dateStr, days) => {
-    // Si la duración es N, el fin es N-1 días después del inicio.
-    // Ejemplo: Inicio día 1, Duración 5 días. Fin = 1 + (5 - 1) = día 5.
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return dateStr;
-    // Si days es la duración, sumamos days - 1 día
     date.setDate(date.getDate() + days - 1); 
     return date.toISOString().split('T')[0];
 };
@@ -152,7 +150,9 @@ const rollupParentDates = (parentId, tasks) => {
 
 // --- Utilities para CPM ---
 const getPredecessors = (taskId, tasks) => {
-    return tasks.filter(t => t.dependencies && t.dependencies.split(',').map(id => id.trim()).includes(taskId));
+    // Aquí el cálculo de predecesores es inverso (buscamos tareas que dependen de taskId)
+    // Se mantiene la lógica original
+    return tasks.filter(t => t.dependencies && parseDependencies(t.dependencies).some(dep => dep.taskId === taskId));
 };
 
 const dateToDays = (dateStr) => {
@@ -185,24 +185,35 @@ const calculateCriticalPath = (tasks) => {
     // PASO ADELANTE (FORWARD PASS)
     for (const task of cpmTasks) {
         let maxPredecessorFinishDay = -Infinity;
-        const dependencies = task.dependencies ? task.dependencies.split(',').map(id => id.trim()) : [];
+        const dependencies = parseDependencies(task.dependencies);
 
         if (dependencies.length > 0) {
-            for (const depId of dependencies) {
-                const predecessor = taskMap.get(depId);
+            for (const dep of dependencies) {
+                const predecessor = taskMap.get(dep.taskId);
+                
+                // Si la dependencia existe
                 if (predecessor && predecessor.earlyFinish) {
                     const predecessorEFDay = dateToDays(predecessor.earlyFinish);
+                    let successorStartDay;
+
+                    // Lógica CPM avanzada basada en tipos de dependencia (solo implementada parcialmente aquí,
+                    // el cálculo de EF y ES solo usa FS por simplicidad en el Forward Pass. Para CPM completo
+                    // habría que usar toda la matriz de dependencias).
+
+                    // Simplificación: FS (Finish-to-Start)
+                    successorStartDay = predecessorEFDay + 1 + dep.lag;
+                    
                     maxPredecessorFinishDay = Math.max(
                         maxPredecessorFinishDay,
-                        predecessorEFDay
+                        successorStartDay
                     );
                 }
             }
         }
 
         const earlyStartDay = isFinite(maxPredecessorFinishDay)
-            ? maxPredecessorFinishDay + 1
-            : dateToDays(task.start);
+            ? maxPredecessorFinishDay
+            : dateToDays(task.start); // Si no hay predecesor, se usa la fecha de inicio actual.
 
         const earlyFinishDay = earlyStartDay + task.duration - 1;
 
@@ -223,19 +234,26 @@ const calculateCriticalPath = (tasks) => {
 
         if (successors.length > 0) {
             for (const successor of successors) {
-                const successorLS = taskMap.get(successor.id);
-                const successorLSDay = dateToDays(successorLS.lateStart);
-
-                minSuccessorStartDay = Math.min(
-                    minSuccessorStartDay,
-                    successorLSDay
-                );
+                const successorTask = taskMap.get(successor.id);
+                // Aquí deberíamos buscar la dependencia específica de Successor -> Task
+                const depToTask = parseDependencies(successorTask.dependencies).find(d => d.taskId === task.id);
+                
+                if (successorTask && depToTask) {
+                    const successorLSDay = dateToDays(successorTask.lateStart);
+                    // Simplificación: FS (Finish-to-Start)
+                    const predecessorFinishDay = successorLSDay - 1 - depToTask.lag;
+                    
+                    minSuccessorStartDay = Math.min(
+                        minSuccessorStartDay,
+                        predecessorFinishDay + 1 // El inicio del sucesor menos 1 día (para LF del predecesor)
+                    );
+                }
             }
         }
 
         const lateFinishDay = isFinite(minSuccessorStartDay)
-            ? minSuccessorStartDay - 1
-            : projectFinishDay;
+            ? minSuccessorStartDay - 1 // Si tiene sucesores, el LF es un día antes del ES más temprano del sucesor
+            : projectFinishDay; // Si no tiene sucesores, el LF es el fin del proyecto.
 
         const lateStartDay = lateFinishDay - task.duration + 1;
 
@@ -325,6 +343,10 @@ const TableGantt = () => {
 
     // Estado para filtros por columna (no implementado en JSX, pero sí en la lógica)
     const [columnFilters, setColumnFilters] = useState({});
+
+    // Estado para el Modal (Mantenido)
+    const [isDependencyModalOpen, setIsDependencyModalOpen] = useState(false);
+    const [selectedTaskId, setSelectedTaskId] = useState(null);
 
     // ESTADO PARA EL BUSCADOR Y PADRES
     const [taskSearchTerm, setTaskSearchTerm] = useState('');
@@ -449,6 +471,20 @@ const TableGantt = () => {
     // --------------------------------------------------------------------------------------
     // 3. HANDLERS DE TAREAS Y ROLLUPS
     // --------------------------------------------------------------------------------------
+
+    // Función para abrir el Modal (Mantenido)
+    const handleManageDependencies = useCallback((taskId) => {
+        console.log(taskId)
+        setSelectedTaskId(taskId); // Guarda el ID de la tarea
+        setIsDependencyModalOpen(true); // Abre el modal
+    }, []);
+
+    // Función para cerrar el Modal (Mantenido)
+    const handleCloseModal = useCallback(() => {
+        setIsDependencyModalOpen(false);
+        setSelectedTaskId(null);
+    }, []);
+
     const rollupDates = useCallback((parentId, currentTasks) => rollupParentDates(parentId, currentTasks), []);
 
     const calculateAggregatedProgress = useCallback((parentId, currentTasks) => {
@@ -523,83 +559,82 @@ const TableGantt = () => {
         });
     }, [createNewTask, rollupDates]);
 
-    // Asegúrate de que esta función esté dentro del componente TableGantt
-const updateTaskData = useCallback((id, columnId, newValue) => {
-    setTasks(prevTasks => {
-        let updatedTasks = prevTasks.map(task => {
-            if (task.id === id) {
-                let finalValue = newValue;
-                if (columnId === 'cost' || columnId === 'progress' || columnId === 'duration' || typeof task[columnId] === 'number') {
-                    finalValue = Math.max(0, parseFloat(newValue) || 0); // Asegura duración/progreso/costo >= 0
-                }
-                if (columnId === 'progress') finalValue = Math.min(100, finalValue);
-                
-                let updatedTask = { ...task, [columnId]: finalValue };
-
-                // ⭐️ LÓGICA DE SINCRONIZACIÓN DE DURACIÓN CON FECHA DE FIN
-                if (columnId === 'duration') {
-                    const newDuration = Math.max(1, finalValue); // Duración mínima de 1
-                    updatedTask.duration = newDuration;
-                    updatedTask.end = addDays(updatedTask.start, newDuration);
-                    columnId = 'end'; // Forzar el rollup de fechas
-                }
-                // ⭐️ LÓGICA DE SINCRONIZACIÓN DE FECHAS CON DURACIÓN
-                else if (columnId === 'start' || columnId === 'end') {
-                    const duration = getDuration(updatedTask.start, updatedTask.end);
-                    updatedTask.duration = Math.max(1, duration);
-                }
-                
-                return updatedTask;
-            }
-            return task;
-        });
-
-        const modifiedTask = updatedTasks.find(t => t.id === id);
-
-        // 1. Rollup de Progreso (Lógica inalterada)
-        if (modifiedTask && modifiedTask.parentId && columnId === 'progress') {
-            let parentIdToUpdate = modifiedTask.parentId;
-            while (parentIdToUpdate) {
-                const progress = calculateAggregatedProgress(parentIdToUpdate, updatedTasks);
-                updatedTasks = updatedTasks.map(t => t.id === parentIdToUpdate ? { ...t, progress } : t);
-                const parentTask = updatedTasks.find(t => t.id === parentIdToUpdate);
-                parentIdToUpdate = parentTask ? parentTask.parentId : null;
-            }
-        }
-
-        // 2. Rollup de Fechas (Se ejecuta si cambiamos 'start', 'end', o 'duration' - ya que 'duration' fuerza columnId='end')
-        if (modifiedTask && modifiedTask.parentId && (columnId === 'start' || columnId === 'end')) {
-            let parentIdToUpdate = modifiedTask.parentId;
-
-            while (parentIdToUpdate) {
-                const { start, end } = rollupDates(parentIdToUpdate, updatedTasks);
-                updatedTasks = updatedTasks.map(t => t.id === parentIdToUpdate ? { ...t, start, end } : t);
-                const parentTask = updatedTasks.find(t => t.id === parentIdToUpdate);
-                parentIdToUpdate = parentTask ? parentTask.parentId : null;
-            }
-        }
-
-        // 3. Ajuste de Fin/Inicio de Tarea al cambiar Inicio/Fin (Asegurar duración >= 1)
-        // Ya cubierta por la lógica de duración, pero la mantenemos para asegurarnos de que la duración sea 1 si las fechas son iguales.
-        if (modifiedTask && (columnId === 'start' || columnId === 'end')) {
-            const duration = getDuration(modifiedTask.start, modifiedTask.end);
-            if (duration <= 0) {
-                const newDate = modifiedTask[columnId];
-                const otherDateKey = columnId === 'start' ? 'end' : 'start';
-                const newOtherDate = newDate; // Establecer la otra fecha igual a la fecha modificada (Duración 1 día)
-
-                updatedTasks = updatedTasks.map(task => {
-                    if (task.id === id) {
-                        return { ...task, [otherDateKey]: newOtherDate, duration: 1 };
+    // Función updateTaskData (Mantenida)
+    const updateTaskData = useCallback((id, columnId, newValue) => {
+        setTasks(prevTasks => {
+            let updatedTasks = prevTasks.map(task => {
+                if (task.id === id) {
+                    let finalValue = newValue;
+                    if (columnId === 'cost' || columnId === 'progress' || columnId === 'duration' || typeof task[columnId] === 'number') {
+                        finalValue = Math.max(0, parseFloat(newValue) || 0); // Asegura duración/progreso/costo >= 0
                     }
-                    return task;
-                });
-            }
-        }
+                    if (columnId === 'progress') finalValue = Math.min(100, finalValue);
+                    
+                    let updatedTask = { ...task, [columnId]: finalValue };
 
-        return updatedTasks;
-    });
-}, [rollupDates, calculateAggregatedProgress]);
+                    // ⭐️ LÓGICA DE SINCRONIZACIÓN DE DURACIÓN CON FECHA DE FIN
+                    if (columnId === 'duration') {
+                        const newDuration = Math.max(1, finalValue); // Duración mínima de 1
+                        updatedTask.duration = newDuration;
+                        updatedTask.end = addDays(updatedTask.start, newDuration);
+                        columnId = 'end'; // Forzar el rollup de fechas
+                    }
+                    // ⭐️ LÓGICA DE SINCRONIZACIÓN DE FECHAS CON DURACIÓN
+                    else if (columnId === 'start' || columnId === 'end') {
+                        const duration = getDuration(updatedTask.start, updatedTask.end);
+                        updatedTask.duration = Math.max(1, duration);
+                    }
+                    
+                    return updatedTask;
+                }
+                return task;
+            });
+
+            const modifiedTask = updatedTasks.find(t => t.id === id);
+
+            // 1. Rollup de Progreso (Lógica inalterada)
+            if (modifiedTask && modifiedTask.parentId && columnId === 'progress') {
+                let parentIdToUpdate = modifiedTask.parentId;
+                while (parentIdToUpdate) {
+                    const progress = calculateAggregatedProgress(parentIdToUpdate, updatedTasks);
+                    updatedTasks = updatedTasks.map(t => t.id === parentIdToUpdate ? { ...t, progress } : t);
+                    const parentTask = updatedTasks.find(t => t.id === parentIdToUpdate);
+                    parentIdToUpdate = parentTask ? parentTask.parentId : null;
+                }
+            }
+
+            // 2. Rollup de Fechas (Se ejecuta si cambiamos 'start', 'end', o 'duration' - ya que 'duration' fuerza columnId='end')
+            if (modifiedTask && modifiedTask.parentId && (columnId === 'start' || columnId === 'end')) {
+                let parentIdToUpdate = modifiedTask.parentId;
+
+                while (parentIdToUpdate) {
+                    const { start, end } = rollupDates(parentIdToUpdate, updatedTasks);
+                    updatedTasks = updatedTasks.map(t => t.id === parentIdToUpdate ? { ...t, start, end } : t);
+                    const parentTask = updatedTasks.find(t => t.id === parentIdToUpdate);
+                    parentIdToUpdate = parentTask ? parentTask.parentId : null;
+                }
+            }
+
+            // 3. Ajuste de Fin/Inicio de Tarea al cambiar Inicio/Fin (Asegurar duración >= 1)
+            if (modifiedTask && (columnId === 'start' || columnId === 'end')) {
+                const duration = getDuration(modifiedTask.start, modifiedTask.end);
+                if (duration <= 0) {
+                    const newDate = modifiedTask[columnId];
+                    const otherDateKey = columnId === 'start' ? 'end' : 'start';
+                    const newOtherDate = newDate; 
+
+                    updatedTasks = updatedTasks.map(task => {
+                        if (task.id === id) {
+                            return { ...task, [otherDateKey]: newOtherDate, duration: 1 };
+                        }
+                        return task;
+                    });
+                }
+            }
+
+            return updatedTasks;
+        });
+    }, [rollupDates, calculateAggregatedProgress]);
 
     const deleteTask = useCallback((id) => {
         setTasks(prevTasks => {
@@ -619,10 +654,11 @@ const updateTaskData = useCallback((id, columnId, newValue) => {
             // 2. Quitar dependencias de la tarea eliminada
             updatedTasks = updatedTasks.map(task => {
                 if (task.dependencies) {
-                    const newDependencies = task.dependencies.split(',')
-                        .map(dep => dep.trim())
-                        .filter(dep => !taskIdsToRemove.has(dep))
-                        .join(', ');
+                    // Usar parseDependencies y formatDependencies para manejar el formato complejo
+                    const newDependencies = formatDependencies(
+                        parseDependencies(task.dependencies)
+                        .filter(dep => !taskIdsToRemove.has(dep.taskId))
+                    );
                     return { ...task, dependencies: newDependencies };
                 }
                 return task;
@@ -705,11 +741,12 @@ const updateTaskData = useCallback((id, columnId, newValue) => {
             return restWidths;
         });
         setTasks(prevTasks => prevTasks.map(task => {
-            // Usamos columnId para eliminar la propiedad por su accessorKey (que es igual al id)
             const { [columnId]: removedValue, ...restTask } = task; 
             return restTask;
         }));
     }, []);
+
+    // --- Parte 2 del código (continuación de TableGantt) ---
 
     const updateColumnHeader = useCallback((columnId, newHeader) => {
         if (newHeader.trim() === '') return;
@@ -844,7 +881,7 @@ const updateTaskData = useCallback((id, columnId, newValue) => {
     const onGanttScroll = (e) => handleScroll(e.currentTarget, tableScrollRef);
 
     // --------------------------------------------------------------------------------------
-    // 8. COMPONENTE DE EDICIÓN DE ENCABEZADO (Definido aquí para accesibilidad de props)
+    // 8. COMPONENTE DE EDICIÓN DE ENCABEZADO (Mantenido)
     // --------------------------------------------------------------------------------------
     const HeaderEditor = ({ column, updateHeader, dynamicColumns, handleDeleteDynamicColumn }) => {
         const [isEditing, setIsEditing] = useState(false);
@@ -909,7 +946,7 @@ const updateTaskData = useCallback((id, columnId, newValue) => {
 
 
     // --------------------------------------------------------------------------------------
-    // 9. ESTILOS INLINE
+    // 9. ESTILOS INLINE (Mantenidos)
     // --------------------------------------------------------------------------------------
     const mainAppStyle = { padding: '20px', fontFamily: 'Inter, Arial, sans-serif', backgroundColor: '#F9FAFB' };
     const headerStyle = { marginBottom: '20px', color: '#1F2937' };
@@ -1174,6 +1211,7 @@ const updateTaskData = useCallback((id, columnId, newValue) => {
                                                     addNewTask={addNewTask}
                                                     addNewMilestone={addNewMilestone}
                                                     deleteTask={deleteTask}
+                                                    onManageDependencies={handleManageDependencies}
                                                 />
 
                                             </td>
@@ -1182,8 +1220,10 @@ const updateTaskData = useCallback((id, columnId, newValue) => {
                                 ))}
                             </tbody>
                         </table>
+                        
                     </div>
                 </div>
+                
 
                 {/* --- DIVISOR CENTRAL (Panel Redimensionable) --- */}
                 <div
@@ -1204,11 +1244,35 @@ const updateTaskData = useCallback((id, columnId, newValue) => {
                 </div>
             </div>
 
-            {/* Estilo global para cambiar el cursor en todo el cuerpo durante el arrastre */}
             {(isColumnResizingActive || isPanelResizing) && (
                 <style>{`body { cursor: col-resize !important; user-select: none; }`}</style>
             )}
+            
+
+            {/* ⭐️ CORRECCIÓN CRÍTICA: Renderizar el Modal Avanzado con props. */}
+            {(isDependencyModalOpen) && (
+                <>
+                    <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        backgroundColor: 'rgba(0, 0, 0, 0.65)', 
+                        zIndex: 1000, 
+                    }} onClick={handleCloseModal} />
+                
+                    <DependencyManagerModal
+                        taskId={selectedTaskId}
+                        onClose={handleCloseModal}
+                        // ⭐️ PASAR DATOS CRUCIALES AL MODAL AVANZADO ⭐️
+                        allTasks={fullTaskData} 
+                        updateTaskData={updateTaskData} 
+                    />
+                </>
+            )}
         </div>
+        
     );
 };
 
